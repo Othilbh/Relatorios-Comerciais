@@ -320,4 +320,4 @@ def extrair_estoque_por_vendedor(pdf_path: str) -> dict:
         else:
             resultado["SEM_VENDEDOR"].append(item)
 
-    return resultado
+    return resultado 
