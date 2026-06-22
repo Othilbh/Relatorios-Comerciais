@@ -29,12 +29,12 @@ VENDEDOR_MAP = {
 
 VENDEDORES_ATIVOS = ["Farley", "Dora", "Afanais", "Roni", "Reginaldo", "Luciano", "Juliana", "Claudia"]
 
-def normalizar_vendedor(nome: str) -> str:
-    upper = nome.strip().upper().replace("-", " ").replace("  ", " ")
+def normalizar_vendedor(nome: str):
+    upper = nome.strip().upper()
     for chave, canonico in VENDEDOR_MAP.items():
-        if chave.upper() in upper:
+        if chave in upper:
             return canonico
-    return nome.strip().title()
+    return None
 
 def pdf_para_texto(pdf_path: str) -> str:
     try:
@@ -111,7 +111,7 @@ def extrair_dados_pdf(pdf_path: str) -> dict:
             continue
         m = re_vendedor.match(linha_strip)
         if m and not vendedor:
-            vendedor = normalizar_vendedor(m.group(1))
+            vendedor = normalizar_vendedor(m.group(1)) or m.group(1)
             continue
         m = re_data.search(linha_strip)
         if m and not data_ref:
@@ -177,29 +177,16 @@ def validar_totais(dados: dict) -> tuple:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PARSER ESPECÍFICO: Lucratividade por Vendedor-Faturamento no Previsão
-# Usado na página de Metas Semanais
+# PARSER: Lucratividade por Vendedor-Faturamento no Previsão
 # ══════════════════════════════════════════════════════════════════════════
-
 def extrair_vendas_por_vendedor(pdf_path: str) -> dict:
-    """
-    Extrai do PDF 'Lucratividade por Vendedor-Faturamento no Previsão':
-    Retorna dict {vendedor_canonico: {descricao_produto: qtd_vendida}}
-    Ignora LUCA automaticamente.
-    """
     texto = pdf_para_texto(pdf_path)
     linhas = texto.splitlines()
-
     resultado = {}
     vendedor_atual = None
 
-    re_vendedor_secao = re.compile(
-        r"Vendedor\s*:\s*\d+\s+(.+)", re.IGNORECASE
-    )
-    re_total_vendedor = re.compile(
-        r"Total\s+por\s+Vendedor", re.IGNORECASE
-    )
-    # Linha de produto: código descrição CX qtd dev total val.unit custo lucro lucro_unit lucro%
+    re_vendedor_secao = re.compile(r"Vendedor\s*:\s*\d+\s+(.+)", re.IGNORECASE)
+    re_total_vendedor = re.compile(r"Total\s+por\s+Vendedor", re.IGNORECASE)
     re_linha_produto = re.compile(
         r"^\S+\s+(.+?)\s+CX\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)"
     )
@@ -208,13 +195,10 @@ def extrair_vendas_por_vendedor(pdf_path: str) -> dict:
         linha_strip = linha.strip()
         if not linha_strip:
             continue
-
-        # Nova seção de vendedor
         m = re_vendedor_secao.match(linha_strip)
         if m:
             nome_raw = m.group(1).strip()
             vendedor_canonico = normalizar_vendedor(nome_raw)
-            # Ignora Luca
             if vendedor_canonico not in VENDEDORES_ATIVOS:
                 vendedor_atual = None
             else:
@@ -222,23 +206,118 @@ def extrair_vendas_por_vendedor(pdf_path: str) -> dict:
                 if vendedor_atual not in resultado:
                     resultado[vendedor_atual] = {}
             continue
-
-        # Fim da seção
         if re_total_vendedor.search(linha_strip):
             vendedor_atual = None
             continue
-
-        # Linha de produto
         if vendedor_atual:
             m = re_linha_produto.match(linha_strip)
             if m:
                 descricao = m.group(1).strip()
                 qtd = limpar_numero(m.group(2))
-                # Remove sufixo do vendedor colado na descrição (ex: "-FARLEY - FARLEY")
                 descricao = re.sub(r'\s*-\s*\w+\s*-\s*\w+\s*$', '', descricao).strip()
                 if qtd > 0:
                     if descricao not in resultado[vendedor_atual]:
                         resultado[vendedor_atual][descricao] = 0.0
                     resultado[vendedor_atual][descricao] += qtd
+
+    return resultado
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PARSER: Estoque Físico - Othil-BH
+# Retorna produtos por vendedor responsável (complemento)
+# ══════════════════════════════════════════════════════════════════════════
+def extrair_estoque_por_vendedor(pdf_path: str) -> dict:
+    """
+    Lê o PDF de Estoque Físico e retorna:
+    {
+        "Farley": [
+            {
+                "codigo": str,
+                "descricao": str,
+                "complemento": str,   # nome do vendedor como aparece no PDF
+                "data_entrada": str,
+                "saldo_atual": float,
+                "qtd_vendida": float,
+                "custo": float,
+                "md_venda": float,
+            }
+        ],
+        ...
+        "SEM_VENDEDOR": [...],   # produtos sem responsável identificado
+    }
+    Produtos com saldo_atual == 0 são ignorados.
+    """
+    texto = pdf_para_texto(pdf_path)
+    linhas = texto.splitlines()
+
+    resultado = {v: [] for v in VENDEDORES_ATIVOS}
+    resultado["SEM_VENDEDOR"] = []
+
+    # Linha típica:
+    # CODIGO DESCRICAO COMPLEMENTO DD/MM/YYYY ATUAL ANTERIOR VENDIDA CUSTO MD_VENDA
+    re_linha = re.compile(
+        r"^(\S+)\s+(.+?)\s+(\d{2}/\d{2}/\d{4})\s+"
+        r"([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
+    )
+
+    # Linhas de cabeçalho/rodapé a ignorar
+    re_ignorar = re.compile(
+        r"(Parâmetros|Empresa|Período|Produto|Depósito|Agrupa|Lista|Emissão|Usuário|"
+        r"Página|c:\\|Estoque Físico|Total Geral|Código|Saldos|Complemento|"
+        r"Não Lista|Todos os|Agrupa|Data Entrada)",
+        re.IGNORECASE
+    )
+
+    for linha in linhas:
+        linha_strip = linha.strip()
+        if not linha_strip:
+            continue
+        if re_ignorar.search(linha_strip):
+            continue
+
+        m = re_linha.match(linha_strip)
+        if not m:
+            continue
+
+        codigo       = m.group(1)
+        desc_comp    = m.group(2).strip()
+        data_entrada = m.group(3)
+        saldo_atual  = limpar_numero(m.group(4))
+        qtd_vendida  = limpar_numero(m.group(6))
+        custo        = limpar_numero(m.group(7))
+        md_venda     = limpar_numero(m.group(8))
+
+        # Ignora saldo zerado
+        if saldo_atual == 0:
+            continue
+
+        # Tenta identificar vendedor no final da descrição+complemento
+        vendedor_found = None
+        complemento_raw = ""
+        descricao = desc_comp
+
+        for chave in sorted(VENDEDOR_MAP.keys(), key=len, reverse=True):
+            if desc_comp.upper().endswith(chave.upper()):
+                vendedor_found = VENDEDOR_MAP[chave]
+                complemento_raw = chave
+                descricao = desc_comp[:-len(chave)].strip()
+                break
+
+        item = {
+            "codigo": codigo,
+            "descricao": descricao,
+            "complemento": complemento_raw,
+            "data_entrada": data_entrada,
+            "saldo_atual": saldo_atual,
+            "qtd_vendida": qtd_vendida,
+            "custo": custo,
+            "md_venda": md_venda,
+        }
+
+        if vendedor_found and vendedor_found in VENDEDORES_ATIVOS:
+            resultado[vendedor_found].append(item)
+        else:
+            resultado["SEM_VENDEDOR"].append(item)
 
     return resultado
