@@ -72,7 +72,7 @@ MAPA_PRODUTO = {
     "Mamão Formoso": ["MAMAO FORMOSO", "MAMÃO FORMOSO"],
     "Goiaba": ["GOIABA"],
     "Melão Amarelo": ["MELAO AMARELO", "MELÃO AMARELO"],
-    "Melão Galia": ["MELAO GALIA", "MELÃO GALIA", "GALIA"],
+    "Melão Gaia": ["MELAO GAIA", "MELÃO GAIA", "GAIA"],
     "Melão Cantaloupe": ["CANTALOUPE"],
     "Tangerina Cumbuca": ["CUMBUCA"],
     "Tangerina Ponkan": ["PONKAN"],
