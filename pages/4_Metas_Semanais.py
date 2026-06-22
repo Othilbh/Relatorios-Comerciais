@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import sys, os, tempfile
 import pandas as pd
 import io
+import json
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from utils.parser import extrair_dados_pdf, VENDEDORES_ATIVOS
@@ -26,7 +27,7 @@ PERCENTUAIS = {
     "Luciano":   0.075,
 }
 
-PRODUTOS_LISTA = [
+PRODUTOS_DEFAULT = [
     "Portuguesa Sabor 55/60", "Portuguesa 60/70", "Portuguesa 70/80",
     "Forelle", "Ercoline", "Pera Asiática",
     "Gala Santa Carol", "Gala Azaleia",
@@ -36,7 +37,7 @@ PRODUTOS_LISTA = [
     "Maçã Argentina", "Maçã Chilena", "Maçã Pink Lady",
     "Maçã Granny Smith", "Maçã Red Globe",
     "Mamão Havai", "Mamão Formoso",
-    "Goiaba", "Melão Amarelo", "Melão Galia", "Melão Cantaloupe",
+    "Goiaba", "Melão Amarelo", "Melão Gaia", "Melão Cantaloupe",
     "Tangerina Cumbuca", "Tangerina Ponkan",
     "Ameixa", "Pêssego", "Nectarina",
     "Morango", "Mirtilo", "Abacaxi",
@@ -72,7 +73,7 @@ MAPA_PRODUTO = {
     "Mamão Formoso": ["MAMAO FORMOSO", "MAMÃO FORMOSO"],
     "Goiaba": ["GOIABA"],
     "Melão Amarelo": ["MELAO AMARELO", "MELÃO AMARELO"],
-    "Melão Gaia": ["MELAO GAIA", "MELÃO GAIA", "GAIA"],
+    "Melão Gaia": ["MELAO GAIA", "MELÃO GAIA", "MELAO GALIA", "MELÃO GALIA"],
     "Melão Cantaloupe": ["CANTALOUPE"],
     "Tangerina Cumbuca": ["CUMBUCA"],
     "Tangerina Ponkan": ["PONKAN"],
@@ -98,10 +99,33 @@ def mapear_produto(desc):
                 return prod_meta
     return None
 
+# ── Carregar lista de produtos salvos ─────────────────────────────────────
+ARQUIVO_PRODUTOS = "/tmp/othil_produtos_extra.json"
+
+def carregar_produtos_extras():
+    try:
+        if os.path.exists(ARQUIVO_PRODUTOS):
+            with open(ARQUIVO_PRODUTOS, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def salvar_produtos_extras(lista):
+    try:
+        with open(ARQUIVO_PRODUTOS, "w", encoding="utf-8") as f:
+            json.dump(lista, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+produtos_extras = carregar_produtos_extras()
+PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in produtos_extras if p not in PRODUTOS_DEFAULT]
+
 # ── Inicializa estado ─────────────────────────────────────────────────────
 if "produtos_meta" not in st.session_state:
-    st.session_state.produtos_meta = []  # lista de {produto, estoque}
+    st.session_state.produtos_meta = []
 
+# ── Período ───────────────────────────────────────────────────────────────
 st.subheader("1️⃣ Definir Metas")
 col_ini, col_fim = st.columns(2)
 with col_ini:
@@ -110,36 +134,61 @@ with col_fim:
     semana_fim = st.date_input("Fim da semana", value=semana_ini + timedelta(days=5))
 
 # ── Adicionar produto ─────────────────────────────────────────────────────
-st.caption("Busque e adicione os produtos da semana:")
+st.caption("Busque ou digite um novo produto para adicionar:")
 
 produtos_ja_adicionados = [p["produto"] for p in st.session_state.produtos_meta]
 produtos_disponiveis = [p for p in PRODUTOS_LISTA if p not in produtos_ja_adicionados]
 
-col_busca, col_estoque, col_btn = st.columns([3, 1, 1])
+col_busca, col_novo, col_estoque, col_btn = st.columns([2, 2, 1, 1])
+
 with col_busca:
     produto_selecionado = st.selectbox(
-        "🔍 Buscar produto",
+        "Buscar produto",
         options=[""] + produtos_disponiveis,
-        format_func=lambda x: "Digite para buscar..." if x == "" else x,
+        format_func=lambda x: "🔍 Selecione da lista..." if x == "" else x,
         label_visibility="collapsed"
     )
+
+with col_novo:
+    produto_novo = st.text_input(
+        "Novo produto",
+        placeholder="✏️ Ou digite um produto novo...",
+        label_visibility="collapsed"
+    )
+
 with col_estoque:
-    estoque_input = st.number_input("Estoque (CX)", min_value=0.0, step=1.0, label_visibility="collapsed", placeholder="Estoque CX")
+    estoque_input = st.number_input(
+        "Estoque",
+        min_value=0.0,
+        step=1.0,
+        label_visibility="collapsed",
+        placeholder="Estoque CX"
+    )
+
 with col_btn:
-    if st.button("➕ Adicionar", use_container_width=True):
-        if produto_selecionado and produto_selecionado != "":
-            st.session_state.produtos_meta.append({
-                "produto": produto_selecionado,
-                "estoque": estoque_input
-            })
-            st.rerun()
+    if st.button("➕ Adicionar", use_container_width=True, type="primary"):
+        # Prioriza produto novo digitado
+        produto_final = produto_novo.strip() if produto_novo.strip() else produto_selecionado
+
+        if produto_final and produto_final != "":
+            if produto_final not in produtos_ja_adicionados:
+                st.session_state.produtos_meta.append({
+                    "produto": produto_final,
+                    "estoque": estoque_input
+                })
+                # Salva na lista persistente se for novo
+                if produto_final not in PRODUTOS_LISTA:
+                    produtos_extras.append(produto_final)
+                    salvar_produtos_extras(produtos_extras)
+                    st.toast(f"✅ '{produto_final}' adicionado à lista permanente!")
+                st.rerun()
+        else:
+            st.warning("Selecione ou digite um produto.")
 
 # ── Tabela de metas ───────────────────────────────────────────────────────
 if st.session_state.produtos_meta:
     st.divider()
-    st.caption("Estoque e metas calculadas automaticamente por vendedor:")
 
-    colunas = ["Produto", "Estoque CX"] + [f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS]
     rows = []
     for item in st.session_state.produtos_meta:
         est = item["estoque"]
@@ -150,7 +199,6 @@ if st.session_state.produtos_meta:
 
     df_metas = pd.DataFrame(rows)
 
-    # Permite editar estoque
     df_editado = st.data_editor(
         df_metas,
         use_container_width=True,
@@ -164,9 +212,11 @@ if st.session_state.produtos_meta:
         if i < len(st.session_state.produtos_meta):
             st.session_state.produtos_meta[i]["estoque"] = row["Estoque CX"]
 
-    if st.button("🗑️ Limpar tudo", type="secondary"):
-        st.session_state.produtos_meta = []
-        st.rerun()
+    col_limpar, _ = st.columns([1, 4])
+    with col_limpar:
+        if st.button("🗑️ Limpar tudo", type="secondary"):
+            st.session_state.produtos_meta = []
+            st.rerun()
 
     st.divider()
 
@@ -226,7 +276,6 @@ if st.session_state.produtos_meta:
 
         st.divider()
 
-        # Gerar Excel
         thin = Side(style="thin", color="BFBFBF")
         brd = Border(left=thin, right=thin, top=thin, bottom=thin)
         COR_H = "1A3A5C"; COR_S = "2E6DA4"
@@ -291,4 +340,4 @@ if st.session_state.produtos_meta:
             use_container_width=True,
         )
 else:
-    st.info("Adicione produtos usando a busca acima para começar.")
+    st.info("👆 Adicione produtos usando a busca acima para começar.")
