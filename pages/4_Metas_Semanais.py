@@ -8,7 +8,7 @@ import json
 import math
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from utils.parser import extrair_dados_pdf, VENDEDORES_ATIVOS
+from utils.parser import extrair_vendas_por_vendedor, VENDEDORES_ATIVOS
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
@@ -47,16 +47,16 @@ PRODUTOS_DEFAULT = [
 ]
 
 MAPA_PRODUTO = {
-    "Portuguesa Sabor 55/60": ["PORTUGUESA SABOR", "PORTUGUESA 55", "PORTUGUESA SAB"],
+    "Portuguesa Sabor 55/60": ["PORTUGUESA SABOR", "PORTUGUESA 55", "PORTUGUESA SAB", "02050032"],
     "Portuguesa 60/70": ["PORTUGUESA 60"],
     "Portuguesa 70/80": ["PORTUGUESA 70"],
-    "Forelle": ["FORELLE"],
+    "Forelle": ["FORELLE", "020502701"],
     "Ercoline": ["ERCOLINE"],
     "Pera Asiática": ["ASIATICA", "ASIÁTICA"],
     "Gala Santa Carol": ["GALA SANTA", "SANTA CAROL"],
     "Gala Azaleia": ["GALA AZALEIA"],
     "Fuji Expressa 180": ["FUJI EXPRESSA", "FUJI 180"],
-    "Fuji Azaleia": ["FUJI AZALEIA"],
+    "Fuji Azaleia": ["FUJI AZALEIA", "702145135", "702145165"],
     "Fuji Hiragami": ["HIRAGAMI"],
     "Fuji Suprema": ["FUJI SUPREMA"],
     "Thompson Vitace": ["THOMPSON VITACE"],
@@ -72,11 +72,11 @@ MAPA_PRODUTO = {
     "Maçã Red Globe": ["RED GLOBE"],
     "Mamão Havai": ["MAMAO HAVAI", "MAMÃO HAVAI"],
     "Mamão Formoso": ["MAMAO FORMOSO", "MAMÃO FORMOSO"],
-    "Goiaba": ["GOIABA"],
+    "Goiaba": ["GOIABA", "300200203"],
     "Melão Amarelo": ["MELAO AMARELO", "MELÃO AMARELO"],
-    "Melão Gaia": ["MELAO GAIA", "MELÃO GAIA", "MELAO GALIA", "MELÃO GALIA"],
+    "Melão Gaia": ["MELAO GAIA", "MELÃO GAIA", "MELAO GALIA", "MELÃO GALIA", "3102006"],
     "Melão Cantaloupe": ["CANTALOUPE"],
-    "Tangerina Cumbuca": ["CUMBUCA"],
+    "Tangerina Cumbuca": ["CUMBUCA", "830100903"],
     "Tangerina Ponkan": ["PONKAN"],
     "Ameixa": ["AMEIXA"],
     "Pêssego": ["PESSEGO", "PÊSSEGO"],
@@ -92,7 +92,7 @@ MAPA_PRODUTO = {
     "Tomate Roma": ["TOMATE ROMA", "ROMA"],
 }
 
-def mapear_produto(desc):
+def mapear_produto(desc: str) -> str:
     desc_u = desc.upper()
     for prod_meta, keywords in MAPA_PRODUTO.items():
         for kw in keywords:
@@ -123,6 +123,8 @@ PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in produtos_extras if p not in PROD
 
 if "produtos_meta" not in st.session_state:
     st.session_state.produtos_meta = []
+if "vendido" not in st.session_state:
+    st.session_state.vendido = {}
 
 st.subheader("1️⃣ Definir Metas")
 col_ini, col_fim = st.columns(2)
@@ -131,13 +133,12 @@ with col_ini:
 with col_fim:
     semana_fim = st.date_input("Fim da semana", value=semana_ini + timedelta(days=5))
 
-st.caption("Busque ou digite um novo produto para adicionar:")
+st.caption("Busque ou digite um produto para adicionar:")
 
 produtos_ja_adicionados = [p["produto"] for p in st.session_state.produtos_meta]
 produtos_disponiveis = [p for p in PRODUTOS_LISTA if p not in produtos_ja_adicionados]
 
 col_busca, col_novo, col_estoque, col_btn = st.columns([2, 2, 1, 1])
-
 with col_busca:
     produto_selecionado = st.selectbox(
         "Buscar produto",
@@ -145,36 +146,29 @@ with col_busca:
         format_func=lambda x: "🔍 Selecione da lista..." if x == "" else x,
         label_visibility="collapsed"
     )
-
 with col_novo:
     produto_novo = st.text_input(
         "Novo produto",
         placeholder="✏️ Ou digite um produto novo...",
         label_visibility="collapsed"
     )
-
 with col_estoque:
     estoque_input = st.number_input(
-        "Estoque",
-        min_value=0.0,
-        step=1.0,
-        label_visibility="collapsed",
-        placeholder="Estoque CX"
+        "Estoque", min_value=0.0, step=1.0,
+        label_visibility="collapsed", placeholder="Estoque CX"
     )
-
 with col_btn:
     if st.button("➕ Adicionar", use_container_width=True, type="primary"):
         produto_final = produto_novo.strip() if produto_novo.strip() else produto_selecionado
         if produto_final and produto_final != "":
             if produto_final not in produtos_ja_adicionados:
                 st.session_state.produtos_meta.append({
-                    "produto": produto_final,
-                    "estoque": estoque_input
+                    "produto": produto_final, "estoque": estoque_input
                 })
                 if produto_final not in PRODUTOS_LISTA:
                     produtos_extras.append(produto_final)
                     salvar_produtos_extras(produtos_extras)
-                    st.toast(f"✅ '{produto_final}' adicionado à lista permanente!")
+                    st.toast(f"✅ '{produto_final}' salvo na lista permanente!")
                 st.rerun()
         else:
             st.warning("Selecione ou digite um produto.")
@@ -191,15 +185,11 @@ if st.session_state.produtos_meta:
         rows.append(row)
 
     df_metas = pd.DataFrame(rows)
-
     df_editado = st.data_editor(
-        df_metas,
-        use_container_width=True,
-        hide_index=True,
+        df_metas, use_container_width=True, hide_index=True,
         disabled=["Produto"] + [f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS],
         key="editor_metas"
     )
-
     for i, row in df_editado.iterrows():
         if i < len(st.session_state.produtos_meta):
             st.session_state.produtos_meta[i]["estoque"] = row["Estoque CX"]
@@ -208,34 +198,43 @@ if st.session_state.produtos_meta:
     with col_limpar:
         if st.button("🗑️ Limpar tudo", type="secondary"):
             st.session_state.produtos_meta = []
+            st.session_state.vendido = {}
             st.rerun()
 
     st.divider()
     st.subheader("2️⃣ Upload do PDF de Vendas Acumuladas")
+    st.caption("PDF: Lucratividade por Vendedor-Faturamento no Previsão (Mercatus)")
     uploaded_pdf = st.file_uploader("📂 PDF de vendas acumuladas", type=["pdf"])
-
-    vendido = {v: {} for v in VENDEDORES_ATIVOS}
 
     if uploaded_pdf:
         with st.spinner("🔍 Lendo PDF..."):
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                 tmp.write(uploaded_pdf.read())
                 tmp_path = tmp.name
-            dados = extrair_dados_pdf(tmp_path)
+            vendas_raw = extrair_vendas_por_vendedor(tmp_path)
             os.unlink(tmp_path)
 
-        vendedor_pdf = dados.get("vendedor", "")
-        for cli in dados.get("clientes", []):
-            for prod in cli.get("produtos", []):
-                prod_meta = mapear_produto(prod.get("descricao", ""))
-                if prod_meta and vendedor_pdf in vendido:
-                    vendido[vendedor_pdf][prod_meta] = vendido[vendedor_pdf].get(prod_meta, 0) + prod.get("qtd", 0)
-        st.success(f"✅ Dados de {vendedor_pdf} carregados.")
+        # Consolida vendas por produto de meta
+        vendido_consolidado = {v: {} for v in VENDEDORES_ATIVOS}
+        for vendedor, produtos in vendas_raw.items():
+            if vendedor not in vendido_consolidado:
+                continue
+            for desc, qtd in produtos.items():
+                prod_meta = mapear_produto(desc)
+                if prod_meta:
+                    vendido_consolidado[vendedor][prod_meta] = vendido_consolidado[vendedor].get(prod_meta, 0) + qtd
+
+        st.session_state.vendido = vendido_consolidado
+
+        total_vendedores = len([v for v in vendas_raw if v in VENDEDORES_ATIVOS])
+        st.success(f"✅ Dados carregados! {total_vendedores} vendedor(es) encontrado(s): {', '.join([v for v in vendas_raw if v in VENDEDORES_ATIVOS])}")
 
     st.divider()
     st.subheader("3️⃣ Resultado das Metas")
 
     if st.button("📊 Calcular Metas", use_container_width=True, type="primary"):
+        vendido = st.session_state.get("vendido", {})
+
         def status(pct):
             if pct >= 100: return "✅ Atingida"
             if pct >= 50: return "⚠️ Em andamento"

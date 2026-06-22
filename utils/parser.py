@@ -60,7 +60,6 @@ def pdf_ocr(pdf_path: str) -> str:
             images = convert_from_path(pdf_path, dpi=200)
             for i, img in enumerate(images):
                 img.save(os.path.join(tmpdir, f"page-{i+1:03d}.jpg"), "JPEG")
-
         pages = sorted(Path(tmpdir).glob("*.jpg"))
         textos = []
         for pg in pages:
@@ -86,7 +85,6 @@ def _remover_sufixo_vendedor(nome: str) -> str:
 def extrair_dados_pdf(pdf_path: str) -> dict:
     texto = pdf_para_texto(pdf_path)
     linhas = texto.splitlines()
-
     vendedor = ""
     data_ref = ""
     clientes = []
@@ -111,17 +109,14 @@ def extrair_dados_pdf(pdf_path: str) -> dict:
         linha_strip = linha.strip()
         if not linha_strip:
             continue
-
         m = re_vendedor.match(linha_strip)
         if m and not vendedor:
             vendedor = normalizar_vendedor(m.group(1))
             continue
-
         m = re_data.search(linha_strip)
         if m and not data_ref:
             data_ref = m.group(1)
             continue
-
         m = re_cliente.match(linha_strip)
         if m:
             if cliente_atual:
@@ -130,15 +125,120 @@ def extrair_dados_pdf(pdf_path: str) -> dict:
             nome_cli = _remover_sufixo_vendedor(m.group(1).strip())
             cliente_atual = {
                 "cliente": nome_cli,
-                "volume": 0.0,
-                "faturamento": 0.0,
-                "custo": 0.0,
-                "produtos": []
+                "volume": 0.0, "faturamento": 0.0, "custo": 0.0, "produtos": []
             }
             produtos_atual = []
             continue
-
         m = re_totais_cliente.search(linha_strip)
         if m and cliente_atual:
             cliente_atual["volume"] = limpar_numero(m.group(1))
             cliente_atual["faturamento"] = limpar_numero(m.group(2))
+            cliente_atual["custo"] = limpar_numero(m.group(3))
+            continue
+        m = re_totais_vendedor.search(linha_strip)
+        if not m:
+            m = re_total_geral.search(linha_strip)
+        if m:
+            total_fat_rodape = limpar_numero(m.group(2))
+            total_custo_rodape = limpar_numero(m.group(3))
+            continue
+        m = re_produto.search(linha_strip)
+        if m and cliente_atual:
+            prod = {
+                "descricao": m.group(2).strip(),
+                "qtd": limpar_numero(m.group(3)),
+                "faturamento": limpar_numero(m.group(4)),
+                "custo_unit": limpar_numero(m.group(5)),
+                "custo_total": limpar_numero(m.group(6)),
+            }
+            produtos_atual.append(prod)
+
+    if cliente_atual:
+        cliente_atual["produtos"] = produtos_atual
+        clientes.append(cliente_atual)
+
+    return {
+        "vendedor": vendedor, "data": data_ref, "clientes": clientes,
+        "total_faturamento": total_fat_rodape, "total_custo": total_custo_rodape,
+    }
+
+def validar_totais(dados: dict) -> tuple:
+    soma_fat = sum(c["faturamento"] for c in dados["clientes"])
+    soma_custo = sum(c["custo"] for c in dados["clientes"])
+    rodape_fat = dados["total_faturamento"]
+    rodape_custo = dados["total_custo"]
+    ok_fat = abs(soma_fat - rodape_fat) < 1.0
+    ok_custo = abs(soma_custo - rodape_custo) < 1.0
+    if ok_fat and ok_custo:
+        return True, "✅ Totais validados com sucesso"
+    else:
+        msg = f"⚠️ Divergência: Fat R${soma_fat:,.2f} vs rodapé R${rodape_fat:,.2f} | Custo R${soma_custo:,.2f} vs rodapé R${rodape_custo:,.2f}"
+        return False, msg
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PARSER ESPECÍFICO: Lucratividade por Vendedor-Faturamento no Previsão
+# Usado na página de Metas Semanais
+# ══════════════════════════════════════════════════════════════════════════
+
+def extrair_vendas_por_vendedor(pdf_path: str) -> dict:
+    """
+    Extrai do PDF 'Lucratividade por Vendedor-Faturamento no Previsão':
+    Retorna dict {vendedor_canonico: {descricao_produto: qtd_vendida}}
+    Ignora LUCA automaticamente.
+    """
+    texto = pdf_para_texto(pdf_path)
+    linhas = texto.splitlines()
+
+    resultado = {}
+    vendedor_atual = None
+
+    re_vendedor_secao = re.compile(
+        r"Vendedor\s*:\s*\d+\s+(.+)", re.IGNORECASE
+    )
+    re_total_vendedor = re.compile(
+        r"Total\s+por\s+Vendedor", re.IGNORECASE
+    )
+    # Linha de produto: código descrição CX qtd dev total val.unit custo lucro lucro_unit lucro%
+    re_linha_produto = re.compile(
+        r"^\S+\s+(.+?)\s+CX\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)"
+    )
+
+    for linha in linhas:
+        linha_strip = linha.strip()
+        if not linha_strip:
+            continue
+
+        # Nova seção de vendedor
+        m = re_vendedor_secao.match(linha_strip)
+        if m:
+            nome_raw = m.group(1).strip()
+            vendedor_canonico = normalizar_vendedor(nome_raw)
+            # Ignora Luca
+            if vendedor_canonico not in VENDEDORES_ATIVOS:
+                vendedor_atual = None
+            else:
+                vendedor_atual = vendedor_canonico
+                if vendedor_atual not in resultado:
+                    resultado[vendedor_atual] = {}
+            continue
+
+        # Fim da seção
+        if re_total_vendedor.search(linha_strip):
+            vendedor_atual = None
+            continue
+
+        # Linha de produto
+        if vendedor_atual:
+            m = re_linha_produto.match(linha_strip)
+            if m:
+                descricao = m.group(1).strip()
+                qtd = limpar_numero(m.group(2))
+                # Remove sufixo do vendedor colado na descrição (ex: "-FARLEY - FARLEY")
+                descricao = re.sub(r'\s*-\s*\w+\s*-\s*\w+\s*$', '', descricao).strip()
+                if qtd > 0:
+                    if descricao not in resultado[vendedor_atual]:
+                        resultado[vendedor_atual][descricao] = 0.0
+                    resultado[vendedor_atual][descricao] += qtd
+
+    return resultado
