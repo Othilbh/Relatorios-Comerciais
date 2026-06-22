@@ -100,40 +100,32 @@ def mapear_produto(desc: str) -> str:
                 return prod_meta
     return None
 
-# ── Arquivos persistentes ─────────────────────────────────────────────────
-ARQUIVO_PRODUTOS_EXTRA = "/tmp/othil_produtos_extra.json"
-ARQUIVO_METAS_SEMANA   = "/tmp/othil_metas_semana.json"
+ARQUIVO_PRODUTOS = "/tmp/othil_produtos_extra.json"
 
-def carregar_json(path):
+def carregar_produtos_extras():
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
+        if os.path.exists(ARQUIVO_PRODUTOS):
+            with open(ARQUIVO_PRODUTOS, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception:
         pass
-    return None
+    return []
 
-def salvar_json(path, dados):
+def salvar_produtos_extras(lista):
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=2)
+        with open(ARQUIVO_PRODUTOS, "w", encoding="utf-8") as f:
+            json.dump(lista, f, ensure_ascii=False)
     except Exception:
         pass
 
-# Carrega produtos extras salvos
-produtos_extras = carregar_json(ARQUIVO_PRODUTOS_EXTRA) or []
+produtos_extras = carregar_produtos_extras()
 PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in produtos_extras if p not in PRODUTOS_DEFAULT]
 
-# Carrega metas da semana salvas
-metas_salvas = carregar_json(ARQUIVO_METAS_SEMANA) or []
-
-# Inicializa session_state com dados salvos
 if "produtos_meta" not in st.session_state:
-    st.session_state.produtos_meta = metas_salvas
+    st.session_state.produtos_meta = []
 if "vendido" not in st.session_state:
     st.session_state.vendido = {}
 
-# ── Período ───────────────────────────────────────────────────────────────
 st.subheader("1️⃣ Definir Metas")
 col_ini, col_fim = st.columns(2)
 with col_ini:
@@ -141,7 +133,6 @@ with col_ini:
 with col_fim:
     semana_fim = st.date_input("Fim da semana", value=semana_ini + timedelta(days=5))
 
-# ── Adicionar produto ─────────────────────────────────────────────────────
 st.caption("Busque ou digite um produto para adicionar:")
 
 produtos_ja_adicionados = [p["produto"] for p in st.session_state.produtos_meta]
@@ -174,18 +165,14 @@ with col_btn:
                 st.session_state.produtos_meta.append({
                     "produto": produto_final, "estoque": estoque_input
                 })
-                # Salva na lista permanente se for novo
                 if produto_final not in PRODUTOS_LISTA:
                     produtos_extras.append(produto_final)
-                    salvar_json(ARQUIVO_PRODUTOS_EXTRA, produtos_extras)
+                    salvar_produtos_extras(produtos_extras)
                     st.toast(f"✅ '{produto_final}' salvo na lista permanente!")
-                # Salva metas da semana
-                salvar_json(ARQUIVO_METAS_SEMANA, st.session_state.produtos_meta)
                 st.rerun()
         else:
             st.warning("Selecione ou digite um produto.")
 
-# ── Tabela de metas ───────────────────────────────────────────────────────
 if st.session_state.produtos_meta:
     st.divider()
 
@@ -203,31 +190,18 @@ if st.session_state.produtos_meta:
         disabled=["Produto"] + [f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS],
         key="editor_metas"
     )
-
-    # Atualiza estoques e salva automaticamente
-    alterou = False
     for i, row in df_editado.iterrows():
         if i < len(st.session_state.produtos_meta):
-            novo_est = row["Estoque CX"]
-            if st.session_state.produtos_meta[i]["estoque"] != novo_est:
-                st.session_state.produtos_meta[i]["estoque"] = novo_est
-                alterou = True
-    if alterou:
-        salvar_json(ARQUIVO_METAS_SEMANA, st.session_state.produtos_meta)
+            st.session_state.produtos_meta[i]["estoque"] = row["Estoque CX"]
 
-    col_limpar, col_info, _ = st.columns([1, 2, 3])
+    col_limpar, _ = st.columns([1, 4])
     with col_limpar:
         if st.button("🗑️ Limpar tudo", type="secondary"):
             st.session_state.produtos_meta = []
             st.session_state.vendido = {}
-            salvar_json(ARQUIVO_METAS_SEMANA, [])
             st.rerun()
-    with col_info:
-        st.caption("💾 Produtos salvos automaticamente")
 
     st.divider()
-
-    # ── Upload PDF ────────────────────────────────────────────────────────
     st.subheader("2️⃣ Upload do PDF de Vendas Acumuladas")
     st.caption("PDF: Lucratividade por Vendedor-Faturamento no Previsão (Mercatus)")
     uploaded_pdf = st.file_uploader("📂 PDF de vendas acumuladas", type=["pdf"])
@@ -240,6 +214,7 @@ if st.session_state.produtos_meta:
             vendas_raw = extrair_vendas_por_vendedor(tmp_path)
             os.unlink(tmp_path)
 
+        # Consolida vendas por produto de meta
         vendido_consolidado = {v: {} for v in VENDEDORES_ATIVOS}
         for vendedor, produtos in vendas_raw.items():
             if vendedor not in vendido_consolidado:
@@ -250,8 +225,9 @@ if st.session_state.produtos_meta:
                     vendido_consolidado[vendedor][prod_meta] = vendido_consolidado[vendedor].get(prod_meta, 0) + qtd
 
         st.session_state.vendido = vendido_consolidado
-        vendedores_encontrados = [v for v in vendas_raw if v in VENDEDORES_ATIVOS]
-        st.success(f"✅ {len(vendedores_encontrados)} vendedor(es): {', '.join(vendedores_encontrados)}")
+
+        total_vendedores = len([v for v in vendas_raw if v in VENDEDORES_ATIVOS])
+        st.success(f"✅ Dados carregados! {total_vendedores} vendedor(es) encontrado(s): {', '.join([v for v in vendas_raw if v in VENDEDORES_ATIVOS])}")
 
     st.divider()
     st.subheader("3️⃣ Resultado das Metas")
