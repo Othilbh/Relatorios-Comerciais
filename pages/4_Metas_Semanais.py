@@ -5,6 +5,7 @@ import sys, os, tempfile
 import pandas as pd
 import io
 import json
+import math
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from utils.parser import extrair_dados_pdf, VENDEDORES_ATIVOS
@@ -99,7 +100,6 @@ def mapear_produto(desc):
                 return prod_meta
     return None
 
-# ── Carregar lista de produtos salvos ─────────────────────────────────────
 ARQUIVO_PRODUTOS = "/tmp/othil_produtos_extra.json"
 
 def carregar_produtos_extras():
@@ -121,11 +121,9 @@ def salvar_produtos_extras(lista):
 produtos_extras = carregar_produtos_extras()
 PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in produtos_extras if p not in PRODUTOS_DEFAULT]
 
-# ── Inicializa estado ─────────────────────────────────────────────────────
 if "produtos_meta" not in st.session_state:
     st.session_state.produtos_meta = []
 
-# ── Período ───────────────────────────────────────────────────────────────
 st.subheader("1️⃣ Definir Metas")
 col_ini, col_fim = st.columns(2)
 with col_ini:
@@ -133,7 +131,6 @@ with col_ini:
 with col_fim:
     semana_fim = st.date_input("Fim da semana", value=semana_ini + timedelta(days=5))
 
-# ── Adicionar produto ─────────────────────────────────────────────────────
 st.caption("Busque ou digite um novo produto para adicionar:")
 
 produtos_ja_adicionados = [p["produto"] for p in st.session_state.produtos_meta]
@@ -167,16 +164,13 @@ with col_estoque:
 
 with col_btn:
     if st.button("➕ Adicionar", use_container_width=True, type="primary"):
-        # Prioriza produto novo digitado
         produto_final = produto_novo.strip() if produto_novo.strip() else produto_selecionado
-
         if produto_final and produto_final != "":
             if produto_final not in produtos_ja_adicionados:
                 st.session_state.produtos_meta.append({
                     "produto": produto_final,
                     "estoque": estoque_input
                 })
-                # Salva na lista persistente se for novo
                 if produto_final not in PRODUTOS_LISTA:
                     produtos_extras.append(produto_final)
                     salvar_produtos_extras(produtos_extras)
@@ -185,16 +179,15 @@ with col_btn:
         else:
             st.warning("Selecione ou digite um produto.")
 
-# ── Tabela de metas ───────────────────────────────────────────────────────
 if st.session_state.produtos_meta:
     st.divider()
 
     rows = []
     for item in st.session_state.produtos_meta:
         est = item["estoque"]
-        row = {"Produto": item["produto"], "Estoque CX": est}
+        row = {"Produto": item["produto"], "Estoque CX": int(est)}
         for v in VENDEDORES_ATIVOS:
-            row[f"{v} ({int(PERCENTUAIS[v]*100)}%)"] = round(est * PERCENTUAIS[v], 1)
+            row[f"{v} ({int(PERCENTUAIS[v]*100)}%)"] = math.ceil(est * PERCENTUAIS[v])
         rows.append(row)
 
     df_metas = pd.DataFrame(rows)
@@ -207,7 +200,6 @@ if st.session_state.produtos_meta:
         key="editor_metas"
     )
 
-    # Atualiza estoques editados
     for i, row in df_editado.iterrows():
         if i < len(st.session_state.produtos_meta):
             st.session_state.produtos_meta[i]["estoque"] = row["Estoque CX"]
@@ -219,8 +211,6 @@ if st.session_state.produtos_meta:
             st.rerun()
 
     st.divider()
-
-    # ── Upload PDF ────────────────────────────────────────────────────────
     st.subheader("2️⃣ Upload do PDF de Vendas Acumuladas")
     uploaded_pdf = st.file_uploader("📂 PDF de vendas acumuladas", type=["pdf"])
 
@@ -256,14 +246,14 @@ if st.session_state.produtos_meta:
             produto = item["produto"]
             est = item["estoque"]
             for v in VENDEDORES_ATIVOS:
-                meta = round(est * PERCENTUAIS[v], 1)
+                meta = math.ceil(est * PERCENTUAIS[v])
                 vend = vendido.get(v, {}).get(produto, 0.0)
                 pct = (vend / meta * 100) if meta > 0 else 0.0
                 resultados.append({
                     "Vendedor": v, "Produto": produto,
-                    "Estoque CX": est,
+                    "Estoque CX": int(est),
                     "Meta CX": meta, "Vendido CX": round(vend, 1),
-                    "Falta CX": round(max(meta - vend, 0), 1),
+                    "Falta CX": max(meta - round(vend, 1), 0),
                     "% Atingido": round(pct, 1), "Status": status(pct),
                 })
 
