@@ -1,0 +1,62 @@
+[
+  {
+    "produto": "Melão Amarelo",
+    "estoque": 597
+  },
+  {
+    "produto": "Melão Gaia",
+    "estoque": 5211
+  },
+  {
+    "produto": "Goiaba",
+    "estoque": 212
+  },
+  {
+    "produto": "Caqui",
+    "estoque": 544
+  },
+  {
+    "produto": "rosada",
+    "estoque": 187
+  },
+  {
+    "produto": "Mirtilo",
+    "estoque": 763
+  },
+  {
+    "produto": "Portuguesa Sabor 55/60",
+    "estoque": 396
+  },
+  {
+    "produto": "Forelle",
+    "estoque": 565
+  },
+  {
+    "produto": "Gala Azaleia",
+    "estoque": 164
+  },
+  {
+    "produto": "Fuji Azaleia",
+    "estoque": 126
+  },
+  {
+    "produto": "Fuji Hiragami",
+    "estoque": 174
+  },
+  {
+    "produto": "Vitoria Grand Valle",
+    "estoque": 990
+  },
+  {
+    "produto": "Kiwi Rio Blanco 33",
+    "estoque": 62
+  },
+  {
+    "produto": "Laranja Fresh e Rofayda",
+    "estoque": 59
+  },
+  {
+    "produto": "Tangerina Cumb. Urugold",
+    "estoque": 30
+  }
+]
