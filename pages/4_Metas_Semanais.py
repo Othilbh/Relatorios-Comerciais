@@ -6,6 +6,8 @@ import pandas as pd
 import io
 import json
 import math
+import base64
+import requests
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from utils.parser import extrair_vendas_por_vendedor, extrair_estoque_por_vendedor, VENDEDORES_ATIVOS
@@ -116,31 +118,45 @@ def mapear_produto(desc: str) -> str:
                 return prod_meta
     return None
 
-ARQUIVO_PRODUTOS_EXTRA = "/tmp/othil_produtos_extra.json"
-ARQUIVO_METAS_SEMANA   = "/tmp/othil_metas_semana.json"
+# ── GitHub Storage ────────────────────────────────────────────────────────
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+GITHUB_REPO  = st.secrets.get("GITHUB_REPO", "Othilbh/Relatorios-Comerciais")
+GITHUB_FILE_METAS = "data/metas_semana.json"
+GITHUB_FILE_PRODUTOS = "data/produtos_extra.json"
 
-def carregar_json(path):
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return None
+def github_get(filepath):
+    if not GITHUB_TOKEN:
+        return None, None
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filepath}"
+    r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
+    if r.status_code == 200:
+        data = r.json()
+        content = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
+        return content, data["sha"]
+    return None, None
 
-def salvar_json(path, dados):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+def github_save(filepath, content, sha=None):
+    if not GITHUB_TOKEN:
+        return False
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filepath}"
+    body = {
+        "message": f"Atualiza {filepath}",
+        "content": base64.b64encode(json.dumps(content, ensure_ascii=False, indent=2).encode()).decode(),
+    }
+    if sha:
+        body["sha"] = sha
+    r = requests.put(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, json=body)
+    return r.status_code in [200, 201]
 
-produtos_extras = carregar_json(ARQUIVO_PRODUTOS_EXTRA) or []
-PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in produtos_extras if p not in PRODUTOS_DEFAULT]
-metas_salvas = carregar_json(ARQUIVO_METAS_SEMANA) or []
-
+# ── Carrega dados salvos ──────────────────────────────────────────────────
 if "produtos_meta" not in st.session_state:
-    st.session_state.produtos_meta = metas_salvas
+    dados, _ = github_get(GITHUB_FILE_METAS)
+    st.session_state.produtos_meta = dados or []
+
+if "produtos_extra" not in st.session_state:
+    dados, _ = github_get(GITHUB_FILE_PRODUTOS)
+    st.session_state.produtos_extra = dados or []
+
 if "vendido" not in st.session_state:
     st.session_state.vendido = {}
 if "estoque" not in st.session_state:
@@ -148,7 +164,11 @@ if "estoque" not in st.session_state:
 if "sem_vendedor" not in st.session_state:
     st.session_state.sem_vendedor = []
 
-# ── Cores e estilos Excel ─────────────────────────────────────────────────
+PRODUTOS_LISTA = PRODUTOS_DEFAULT + [
+    p for p in st.session_state.produtos_extra if p not in PRODUTOS_DEFAULT
+]
+
+# ── Cores Excel ───────────────────────────────────────────────────────────
 COR_H  = "1A3A5C"
 COR_S  = "2E6DA4"
 COR_V  = "C6EFCE"; COR_VF = "276221"
@@ -157,125 +177,132 @@ COR_R  = "FFC7CE"; COR_RF = "9C0006"
 COR_TITULO = "F5A623"
 
 def _fill(c): return PatternFill("solid", fgColor=c)
-def _font(bold=False, color="000000", size=10): return Font(bold=bold, color=color, size=size)
-def _border():
-    t = Side(style="thin", color="BFBFBF")
+def _font(bold=False, color="000000", size=10): return Font(bold=bold, color=color, size=size, name="Calibri")
+def _border_thin():
+    t = Side(style="thin", color="000000")
     return Border(left=t, right=t, top=t, bottom=t)
-def _alinhar(h="center"): return Alignment(horizontal=h, vertical="center", wrap_text=True)
+def _border_medium():
+    m = Side(style="medium", color="000000")
+    return Border(left=m, right=m, top=m, bottom=m)
+def _alinhar(h="center", wrap=False):
+    return Alignment(horizontal=h, vertical="center", wrap_text=wrap)
 
-def hc(ws, r, c, v, bg=COR_H, fg="FFFFFF", bold=True, size=10, align="center"):
-    cell = ws.cell(row=r, column=c, value=v)
-    cell.fill = _fill(bg)
-    cell.font = _font(bold=bold, color=fg, size=size)
-    cell.alignment = _alinhar(align)
-    cell.border = _border()
-    return cell
-
-def dc(ws, r, c, v, fmt=None, bg=None, bold=False, align="center"):
-    cell = ws.cell(row=r, column=c, value=v)
-    if fmt: cell.number_format = fmt
-    if bg: cell.fill = _fill(bg)
-    cell.font = _font(bold=bold)
-    cell.alignment = _alinhar(align)
-    cell.border = _border()
-    return cell
-
-def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas_vendedor, vendido_vendedor):
+def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas, vendido_v):
     ws = wb.create_sheet(vendedor[:31])
     ws.sheet_view.showGridLines = False
 
     # ── Cabeçalho ──────────────────────────────────────────────────────
-    ws.merge_cells("A1:G1")
-    c = ws["A1"]
-    c.value = f"Vendedor: {vendedor.upper()}"
-    c.font = _font(bold=True, size=13, color=COR_H)
-    c.alignment = _alinhar("left")
+    ws.merge_cells("A1:B1")
+    c1 = ws["A1"]
+    c1.value = f"Vendedor :{vendedor.upper()}"
+    c1.font = _font(bold=True, size=11)
+    c1.border = _border_medium()
+    c1.alignment = _alinhar("left")
 
-    ws.merge_cells("A2:G2")
-    c2 = ws["A2"]
-    c2.value = f"Data: {data_ref}"
-    c2.font = _font(size=10, color="666666")
-    c2.alignment = _alinhar("left")
+    ws["A2"] = f"Data {data_ref}"
+    ws["A2"].font = _font(size=10)
 
-    # ── Tabela de Estoque ───────────────────────────────────────────────
-    ws.merge_cells("A4:G4")
-    hc(ws, 4, 1, "ESTOQUE — PRODUTOS SOB SUA RESPONSABILIDADE",
-       bg=COR_H, size=11, align="left")
+    # ── Tabela Estoque ──────────────────────────────────────────────────
+    hdrs = ["Produto", "Complemento", "Data Entrada", "Saldo Atual",
+            "Qtde Vendida", "Custo Unitario", "Md Venda"]
 
-    hdrs_est = ["Produto", "Complemento", "Data Entrada", "Saldo Atual", "Qtde Vendida", "Custo Unitário", "Md Venda"]
-    for ci, h in enumerate(hdrs_est, 1):
-        hc(ws, 5, ci, h, bg=COR_S)
+    row = 4
+    for ci, h in enumerate(hdrs, 1):
+        c = ws.cell(row=row, column=ci, value=h)
+        c.fill = _fill("D9D9D9")
+        c.font = _font(bold=True, size=10)
+        c.alignment = _alinhar("center")
+        c.border = _border_thin()
 
-    row = 6
+    row = 5
     for item in itens_estoque:
-        dc(ws, row, 1, item["descricao"], align="left")
-        dc(ws, row, 2, item["complemento"], align="left")
-        dc(ws, row, 3, item["data_entrada"])
-        dc(ws, row, 4, item["saldo_atual"], fmt='#,##0.0')
-        dc(ws, row, 5, item["qtd_vendida"], fmt='#,##0.0')
-        dc(ws, row, 6, item["custo"], fmt='R$ #,##0.00')
-        dc(ws, row, 7, item["md_venda"], fmt='R$ #,##0.00')
+        vals = [
+            item["descricao"], item["complemento"], item["data_entrada"],
+            item["saldo_atual"], item["qtd_vendida"], item["custo"], item["md_venda"]
+        ]
+        for ci, val in enumerate(vals, 1):
+            c = ws.cell(row=row, column=ci, value=val)
+            c.font = _font(size=10)
+            c.border = _border_thin()
+            if ci == 1:
+                c.alignment = _alinhar("left")
+            elif ci in [6, 7]:
+                c.number_format = 'R$ #,##0.00'
+                c.alignment = _alinhar("right")
+                # Zera em vermelho
+                if val == 0:
+                    c.font = _font(color="FF0000", size=10)
+            elif ci == 5 and val == 0:
+                c.font = _font(color="FF0000", size=10)
+                c.alignment = _alinhar("center")
+            else:
+                c.alignment = _alinhar("center")
         row += 1
 
     row += 1  # linha em branco
 
-    # ── Tabela de Metas ─────────────────────────────────────────────────
-    if metas_vendedor:
+    # ── Tabela Metas ────────────────────────────────────────────────────
+    if metas:
         ws.merge_cells(f"A{row}:G{row}")
-        hc(ws, row, 1, f"METAS SEMANAIS — {vendedor.upper()}",
-           bg=COR_TITULO, fg="000000", size=11, align="left")
+        c_titulo = ws[f"A{row}"]
+        c_titulo.value = f"METAS SEMANAIS — {vendedor.upper()}"
+        c_titulo.fill = _fill(COR_H)
+        c_titulo.font = _font(bold=True, color="FFFFFF", size=11)
+        c_titulo.alignment = _alinhar("center")
+        c_titulo.border = _border_medium()
         row += 1
 
-        hdrs_meta = ["Produto", "Estoque CX", "Meta (cx)", "Vendido (cx)", "Falta (cx)", "% Atingido", "Status"]
+        hdrs_meta = ["Produto", "Meta (cx)", "Vendido (cx)", "Falta (cx)", "% Atingido"]
+        larguras_meta = [5, 1, 1, 1, 1]
         for ci, h in enumerate(hdrs_meta, 1):
-            hc(ws, row, ci, h, bg=COR_S)
+            c = ws.cell(row=row, column=ci, value=h)
+            c.fill = _fill(COR_S)
+            c.font = _font(bold=True, color="FFFFFF", size=10)
+            c.alignment = _alinhar("center")
+            c.border = _border_thin()
         row += 1
 
         total_meta = total_vend = 0
-        for item in metas_vendedor:
+        for item in metas:
             produto = item["produto"]
             est = item["estoque"]
-            meta = math.ceil(est * PERCENTUAIS[vendedor])
-            vend = vendido_vendedor.get(produto, 0.0)
+            meta = math.ceil(est * PERCENTUAIS.get(vendedor, 0))
+            vend = vendido_v.get(produto, 0.0)
             falta = max(meta - vend, 0)
             pct = (vend / meta * 100) if meta > 0 else 0.0
             total_meta += meta
             total_vend += vend
 
-            if pct >= 100: bg_m, fg_m, status = COR_V, COR_VF, "✅ Atingida"
-            elif pct >= 50: bg_m, fg_m, status = COR_A, COR_AF, "⚠️ Em andamento"
-            else: bg_m, fg_m, status = COR_R, COR_RF, "❌ Abaixo"
+            if pct >= 100:   bg_m, fg_m = COR_V,  COR_VF
+            elif pct >= 50:  bg_m, fg_m = COR_A,  COR_AF
+            else:            bg_m, fg_m = COR_R,  COR_RF
 
-            dc(ws, row, 1, produto, align="left")
-            dc(ws, row, 2, int(est))
-            dc(ws, row, 3, meta)
-            dc(ws, row, 4, round(vend, 1))
-            dc(ws, row, 5, round(falta, 1))
-
-            c_pct = ws.cell(row=row, column=6, value=round(pct, 1))
-            c_pct.fill = _fill(bg_m); c_pct.font = _font(color=fg_m)
-            c_pct.alignment = _alinhar(); c_pct.border = _border()
-            c_pct.number_format = '0.00"%"'
-
-            c_st = ws.cell(row=row, column=7, value=status)
-            c_st.fill = _fill(bg_m); c_st.font = _font(color=fg_m)
-            c_st.alignment = _alinhar(); c_st.border = _border()
+            vals_meta = [produto, meta, round(vend, 1), round(falta, 1), f"{pct:.2f}%"]
+            for ci, val in enumerate(vals_meta, 1):
+                c = ws.cell(row=row, column=ci, value=val)
+                c.fill = _fill(bg_m)
+                c.font = _font(color=fg_m, size=10)
+                c.border = _border_thin()
+                c.alignment = _alinhar("left" if ci == 1 else "center")
             row += 1
 
         # Total
         pct_total = (total_vend / total_meta * 100) if total_meta > 0 else 0
-        hc(ws, row, 1, "TOTAL", bg=COR_H, align="left")
-        dc(ws, row, 2, "")
-        dc(ws, row, 3, total_meta, bold=True)
-        dc(ws, row, 4, round(total_vend, 1), bold=True)
-        dc(ws, row, 5, round(max(total_meta - total_vend, 0), 1), bold=True)
-        c_pt = ws.cell(row=row, column=6, value=round(pct_total, 1))
-        c_pt.font = _font(bold=True); c_pt.alignment = _alinhar(); c_pt.border = _border()
-        c_pt.number_format = '0.00"%"'
-        dc(ws, row, 7, "")
+        if pct_total >= 100:   bg_t, fg_t = COR_V,  COR_VF
+        elif pct_total >= 50:  bg_t, fg_t = COR_A,  COR_AF
+        else:                  bg_t, fg_t = COR_R,  COR_RF
+
+        vals_total = ["TOTAL", total_meta, round(total_vend, 1),
+                      round(max(total_meta - total_vend, 0), 1), f"{pct_total:.2f}%"]
+        for ci, val in enumerate(vals_total, 1):
+            c = ws.cell(row=row, column=ci, value=val)
+            c.fill = _fill(bg_t)
+            c.font = _font(bold=True, color=fg_t, size=10)
+            c.border = _border_thin()
+            c.alignment = _alinhar("left" if ci == 1 else "center")
         row += 1
 
-    row += 2  # espaço antes do rodapé
+    row += 2
 
     # ── Rodapé ──────────────────────────────────────────────────────────
     for texto in RODAPE:
@@ -289,13 +316,13 @@ def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas_vendedor, ve
         row += 1
 
     # ── Larguras ────────────────────────────────────────────────────────
-    ws.column_dimensions["A"].width = 40
-    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["A"].width = 38
+    ws.column_dimensions["B"].width = 18
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 13
     ws.column_dimensions["E"].width = 14
-    ws.column_dimensions["F"].width = 15
-    ws.column_dimensions["G"].width = 15
+    ws.column_dimensions["F"].width = 16
+    ws.column_dimensions["G"].width = 14
 
     return ws
 
@@ -304,44 +331,43 @@ def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas_vendedor, ve
 # INTERFACE
 # ══════════════════════════════════════════════════════════════════════════
 
-st.subheader("1️⃣ Definir Metas da Semana")
+st.subheader("1️⃣ Metas da Semana")
+
 col_ini, col_fim = st.columns(2)
 with col_ini:
-    semana_ini = st.date_input("Início da semana",
+    semana_ini = st.date_input("Início",
         value=date.today() - timedelta(days=date.today().weekday()))
 with col_fim:
-    semana_fim = st.date_input("Fim da semana",
+    semana_fim = st.date_input("Fim",
         value=semana_ini + timedelta(days=5))
 
 st.caption("Busque ou digite um produto para adicionar:")
 
-produtos_ja_adicionados = [p["produto"] for p in st.session_state.produtos_meta]
-produtos_disponiveis = [p for p in PRODUTOS_LISTA if p not in produtos_ja_adicionados]
+produtos_ja = [p["produto"] for p in st.session_state.produtos_meta]
+produtos_disp = [p for p in PRODUTOS_LISTA if p not in produtos_ja]
 
-col_busca, col_novo, col_estoque, col_btn = st.columns([2, 2, 1, 1])
+col_busca, col_novo, col_est, col_btn = st.columns([2, 2, 1, 1])
 with col_busca:
-    produto_selecionado = st.selectbox(
-        "Buscar", options=[""] + produtos_disponiveis,
+    prod_sel = st.selectbox("Buscar", options=[""] + produtos_disp,
         format_func=lambda x: "🔍 Selecione da lista..." if x == "" else x,
-        label_visibility="collapsed"
-    )
-with col_novo:
-    produto_novo = st.text_input("Novo", placeholder="✏️ Ou digite um produto novo...",
         label_visibility="collapsed")
-with col_estoque:
-    estoque_input = st.number_input("Estoque", min_value=0.0, step=1.0,
+with col_novo:
+    prod_novo = st.text_input("Novo", placeholder="✏️ Ou digite produto novo...",
+        label_visibility="collapsed")
+with col_est:
+    est_input = st.number_input("Estoque", min_value=0.0, step=1.0,
         label_visibility="collapsed", placeholder="Estoque CX")
 with col_btn:
     if st.button("➕ Adicionar", use_container_width=True, type="primary"):
-        produto_final = produto_novo.strip() if produto_novo.strip() else produto_selecionado
-        if produto_final and produto_final != "":
-            if produto_final not in produtos_ja_adicionados:
-                st.session_state.produtos_meta.append({"produto": produto_final, "estoque": estoque_input})
-                if produto_final not in PRODUTOS_LISTA:
-                    produtos_extras.append(produto_final)
-                    salvar_json(ARQUIVO_PRODUTOS_EXTRA, produtos_extras)
-                    st.toast(f"✅ '{produto_final}' salvo na lista permanente!")
-                salvar_json(ARQUIVO_METAS_SEMANA, st.session_state.produtos_meta)
+        prod_final = prod_novo.strip() if prod_novo.strip() else prod_sel
+        if prod_final and prod_final != "":
+            if prod_final not in produtos_ja:
+                st.session_state.produtos_meta.append({"produto": prod_final, "estoque": est_input})
+                if prod_final not in PRODUTOS_LISTA:
+                    st.session_state.produtos_extra.append(prod_final)
+                    _, sha = github_get(GITHUB_FILE_PRODUTOS)
+                    github_save(GITHUB_FILE_PRODUTOS, st.session_state.produtos_extra, sha)
+                    st.toast(f"✅ '{prod_final}' salvo na lista permanente!")
                 st.rerun()
         else:
             st.warning("Selecione ou digite um produto.")
@@ -355,27 +381,35 @@ if st.session_state.produtos_meta:
             row[f"{v} ({int(PERCENTUAIS[v]*100)}%)"] = math.ceil(est * PERCENTUAIS[v])
         rows.append(row)
 
-    df_editado = st.data_editor(
+    df_edit = st.data_editor(
         pd.DataFrame(rows), use_container_width=True, hide_index=True,
         disabled=["Produto"] + [f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS],
         key="editor_metas"
     )
-    for i, row in df_editado.iterrows():
+    for i, row in df_edit.iterrows():
         if i < len(st.session_state.produtos_meta):
             st.session_state.produtos_meta[i]["estoque"] = row["Estoque CX"]
-    salvar_json(ARQUIVO_METAS_SEMANA, st.session_state.produtos_meta)
 
-    col_limpar, col_info, _ = st.columns([1, 2, 3])
-    with col_limpar:
-        if st.button("🗑️ Limpar tudo", type="secondary"):
+    col_salvar, col_apagar, col_info = st.columns([1, 1, 3])
+    with col_salvar:
+        if st.button("💾 Salvar Metas", type="primary", use_container_width=True):
+            _, sha = github_get(GITHUB_FILE_METAS)
+            ok = github_save(GITHUB_FILE_METAS, st.session_state.produtos_meta, sha)
+            if ok:
+                st.success("✅ Metas salvas com sucesso!")
+            else:
+                st.error("❌ Erro ao salvar. Verifique o token.")
+    with col_apagar:
+        if st.button("🗑️ Apagar Metas", type="secondary", use_container_width=True):
+            _, sha = github_get(GITHUB_FILE_METAS)
+            github_save(GITHUB_FILE_METAS, [], sha)
             st.session_state.produtos_meta = []
             st.session_state.vendido = {}
             st.session_state.estoque = {}
             st.session_state.sem_vendedor = []
-            salvar_json(ARQUIVO_METAS_SEMANA, [])
             st.rerun()
     with col_info:
-        st.caption("💾 Salvo automaticamente")
+        st.caption("💡 Clique em **Salvar Metas** toda segunda-feira. Na semana seguinte, apague e salve novamente.")
 
 st.divider()
 
@@ -384,50 +418,43 @@ st.subheader("2️⃣ Upload dos PDFs")
 
 col_pdf1, col_pdf2 = st.columns(2)
 with col_pdf1:
-    st.caption("📊 PDF de Vendas Acumuladas (Lucratividade por Vendedor)")
+    st.caption("📊 PDF de Vendas Acumuladas")
     pdf_vendas = st.file_uploader("Vendas", type=["pdf"], label_visibility="collapsed")
 with col_pdf2:
-    st.caption("📦 PDF de Estoque Físico (Responsáveis)")
+    st.caption("📦 PDF de Estoque Físico")
     pdf_estoque = st.file_uploader("Estoque", type=["pdf"], label_visibility="collapsed")
 
 if pdf_vendas:
-    with st.spinner("🔍 Lendo PDF de vendas..."):
+    with st.spinner("🔍 Lendo vendas..."):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp.write(pdf_vendas.read()); tmp_path = tmp.name
         vendas_raw = extrair_vendas_por_vendedor(tmp_path)
         os.unlink(tmp_path)
-
-    vendido_consolidado = {v: {} for v in VENDEDORES_ATIVOS}
-    for vendedor, produtos in vendas_raw.items():
-        if vendedor not in vendido_consolidado:
-            continue
-        for desc, qtd in produtos.items():
-            prod_meta = mapear_produto(desc)
-            if prod_meta:
-                vendido_consolidado[vendedor][prod_meta] = vendido_consolidado[vendedor].get(prod_meta, 0) + qtd
-    st.session_state.vendido = vendido_consolidado
+    vendido_c = {v: {} for v in VENDEDORES_ATIVOS}
+    for vend, prods in vendas_raw.items():
+        if vend not in vendido_c: continue
+        for desc, qtd in prods.items():
+            pm = mapear_produto(desc)
+            if pm:
+                vendido_c[vend][pm] = vendido_c[vend].get(pm, 0) + qtd
+    st.session_state.vendido = vendido_c
     found = [v for v in vendas_raw if v in VENDEDORES_ATIVOS]
-    st.success(f"✅ Vendas: {len(found)} vendedor(es) — {', '.join(found)}")
+    st.success(f"✅ Vendas: {', '.join(found)}")
 
 if pdf_estoque:
-    with st.spinner("🔍 Lendo PDF de estoque..."):
+    with st.spinner("🔍 Lendo estoque..."):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp.write(pdf_estoque.read()); tmp_path = tmp.name
-        estoque_raw = extrair_estoque_por_vendedor(tmp_path)
+        est_raw = extrair_estoque_por_vendedor(tmp_path)
         os.unlink(tmp_path)
-
-    st.session_state.estoque = {v: estoque_raw.get(v, []) for v in VENDEDORES_ATIVOS}
-    st.session_state.sem_vendedor = estoque_raw.get("SEM_VENDEDOR", [])
-
-    total_itens = sum(len(v) for v in st.session_state.estoque.values())
-    st.success(f"✅ Estoque: {total_itens} produto(s) distribuídos por vendedor.")
-
+    st.session_state.estoque = {v: est_raw.get(v, []) for v in VENDEDORES_ATIVOS}
+    st.session_state.sem_vendedor = est_raw.get("SEM_VENDEDOR", [])
+    total = sum(len(v) for v in st.session_state.estoque.values())
+    st.success(f"✅ Estoque: {total} produto(s) distribuídos.")
     if st.session_state.sem_vendedor:
-        with st.expander(f"⚠️ {len(st.session_state.sem_vendedor)} produto(s) SEM VENDEDOR identificado", expanded=True):
-            df_sv = pd.DataFrame(st.session_state.sem_vendedor)[
-                ["codigo", "descricao", "data_entrada", "saldo_atual"]
-            ]
-            df_sv.columns = ["Código", "Descrição", "Data Entrada", "Saldo Atual"]
+        with st.expander(f"⚠️ {len(st.session_state.sem_vendedor)} produto(s) SEM VENDEDOR", expanded=True):
+            df_sv = pd.DataFrame(st.session_state.sem_vendedor)[["codigo","descricao","data_entrada","saldo_atual"]]
+            df_sv.columns = ["Código","Descrição","Data Entrada","Saldo Atual"]
             st.dataframe(df_sv, use_container_width=True, hide_index=True)
 
 st.divider()
@@ -442,28 +469,24 @@ if st.button("📋 Gerar Relatórios", use_container_width=True, type="primary")
         with st.spinner("⚙️ Gerando Excel..."):
             wb = Workbook()
             wb.remove(wb.active)
-            data_ref = date.today().strftime("%d/%m/%Y")
+            data_ref = date.today().strftime("%d/%m")
 
             for vendedor in VENDEDORES_ATIVOS:
-                itens_estoque = st.session_state.estoque.get(vendedor, [])
-                vendido_v = st.session_state.vendido.get(vendedor, {})
                 gerar_aba_vendedor(
                     wb, vendedor, data_ref,
-                    itens_estoque,
+                    st.session_state.estoque.get(vendedor, []),
                     st.session_state.produtos_meta,
-                    vendido_v
+                    st.session_state.vendido.get(vendedor, {})
                 )
 
             buf = io.BytesIO()
-            wb.save(buf)
-            buf.seek(0)
+            wb.save(buf); buf.seek(0)
 
-        nome = f"Relatorios_Vendedores_{date.today().strftime('%d%m%Y')}.xlsx"
-        st.success("✅ Relatórios gerados com sucesso!")
+        nome = f"Relatorios_{date.today().strftime('%d%m%Y')}.xlsx"
+        st.success("✅ Relatórios gerados!")
         st.download_button(
-            label="⬇️ Baixar Excel com todos os vendedores",
-            data=buf,
-            file_name=nome,
+            label="⬇️ Baixar Excel — todos os vendedores",
+            data=buf, file_name=nome,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
