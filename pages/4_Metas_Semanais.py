@@ -120,28 +120,25 @@ if "sem_vendedor" not in st.session_state: st.session_state.sem_vendedor = []
 
 PRODUTOS_LISTA = PRODUTOS_DEFAULT + [p for p in st.session_state.produtos_extra if p not in PRODUTOS_DEFAULT]
 
-# ── Estilos Excel ─────────────────────────────────────────────────────────
-COR_H     = "1A3A5C"
-COR_S     = "2E6DA4"
+# ── Helpers Excel ─────────────────────────────────────────────────────────
+COR_H  = "1A3A5C"
+COR_S  = "2E6DA4"
 COR_CINZA = "D9D9D9"
-COR_AZUL_CLARO = "EBF3FB"
+COR_ALT   = "F0F5FC"
 COR_TOTAL = "BDD7EE"
 COR_V = "C6EFCE"; COR_VF = "276221"
 COR_A = "FFEB9C"; COR_AF = "7D6608"
 COR_R = "FFC7CE"; COR_RF = "9C0006"
 
-def _fill(c): return PatternFill("solid", fgColor=c)
-def _font(bold=False, color="000000", size=9): return Font(bold=bold, color=color, size=size, name="Calibri")
-
-def _border_full(style="thin", color="BFBFBF"):
+def _f(c): return PatternFill("solid", fgColor=c)
+def _t(bold=False, color="000000", size=9): return Font(bold=bold, color=color, size=size, name="Calibri")
+def _b(style="thin", color="BFBFBF"):
     s = Side(style=style, color=color)
     return Border(left=s, right=s, top=s, bottom=s)
-
-def _border_thick():
+def _bh():
     m = Side(style="medium", color="1A3A5C")
     return Border(left=m, right=m, top=m, bottom=m)
-
-def _al(h="center", wrap=False): return Alignment(horizontal=h, vertical="center", wrap_text=wrap)
+def _a(h="center", wrap=False): return Alignment(horizontal=h, vertical="center", wrap_text=wrap)
 
 def set_a4(ws):
     from openpyxl.worksheet.page import PageMargins
@@ -150,28 +147,32 @@ def set_a4(ws):
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
-    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.6, bottom=0.6)
+    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
 
-def cor_pct(pct):
+def cor(pct):
     if pct >= 100: return COR_V, COR_VF
     if pct >= 50:  return COR_A, COR_AF
     return COR_R, COR_RF
 
-def hdr(ws, r, c, v, bg=COR_H, fg="FFFFFF", bold=True, sz=9, h="center", border_style="thin"):
+def ch(ws, r, c, v, bg=COR_H, fg="FFFFFF", bold=True, sz=9, h="center"):
     cell = ws.cell(row=r, column=c, value=v)
-    cell.fill = _fill(bg)
-    cell.font = _font(bold=bold, color=fg, size=sz)
-    cell.alignment = _al(h)
-    cell.border = _border_full(border_style, "1A3A5C")
+    cell.fill = _f(bg); cell.font = _t(bold=bold, color=fg, size=sz)
+    cell.alignment = _a(h); cell.border = _b("thin", "1A3A5C")
     return cell
 
-def dat(ws, r, c, v, fmt=None, bg="FFFFFF", bold=False, h="center", color="000000"):
+def cd(ws, r, c, v, fmt=None, bg="FFFFFF", bold=False, h="center", color="000000"):
     cell = ws.cell(row=r, column=c, value=v)
-    cell.fill = _fill(bg)
-    cell.font = _font(bold=bold, color=color, size=9)
-    cell.alignment = _al(h)
-    cell.border = _border_full("thin", "BFBFBF")
+    cell.fill = _f(bg); cell.font = _t(bold=bold, color=color, size=9)
+    cell.alignment = _a(h); cell.border = _b()
     if fmt: cell.number_format = fmt
+    return cell
+
+def cp(ws, r, c, pct):
+    bg_p, fg_p = cor(pct)
+    cell = ws.cell(row=r, column=c, value=round(pct, 1))
+    cell.fill = _f(bg_p); cell.font = _t(bold=True, color=fg_p, size=9)
+    cell.alignment = _a("center"); cell.border = _b()
+    cell.number_format = '0.0"%"'
     return cell
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -182,80 +183,56 @@ def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas, vendido_v):
     ws.sheet_view.showGridLines = False
     set_a4(ws)
 
-    # ── Cabeçalho ──────────────────────────────────────────────────────
-    ws.row_dimensions[1].height = 26
+    # Cabeçalho
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[2].height = 14
     ws.merge_cells("A1:G1")
     c = ws["A1"]
-    c.value = f"OTHIL  ·  RELATÓRIO DIÁRIO  ·  Vendedor: {vendedor.upper()}  ·  Data: {data_ref}"
-    c.fill = _fill(COR_H)
-    c.font = _font(bold=True, color="FFFFFF", size=12)
-    c.alignment = _al("center")
-    c.border = _border_thick()
+    c.value = f"Vendedor : {vendedor.upper()}"
+    c.font = _t(bold=True, size=11); c.alignment = _a("left")
+    c.border = _bh()
+    ws["A2"] = f"Data {data_ref}"
+    ws["A2"].font = _t(size=10)
 
-    # ── Título Estoque ──────────────────────────────────────────────────
-    ws.row_dimensions[2].height = 18
-    ws.merge_cells("A2:G2")
-    c2 = ws["A2"]
-    c2.value = "  ESTOQUE  ·  PRODUTOS SOB SUA RESPONSABILIDADE"
-    c2.fill = _fill(COR_S)
-    c2.font = _font(bold=True, color="FFFFFF", size=10)
-    c2.alignment = _al("left")
-    c2.border = _border_full("medium", "1A3A5C")
-
-    # ── Header Estoque ──────────────────────────────────────────────────
-    ws.row_dimensions[3].height = 15
-    hdrs_e = ["Produto", "Complemento", "Dt. Entrada", "Saldo Atual", "Qtde Vendida", "Custo Unit.", "Md Venda"]
+    # Header estoque
+    ws.row_dimensions[4].height = 28
+    hdrs_e = ["Produto", "Complemento", "Data Entrada", "Saldo Atual", "Qtde Vendida", "Custo Unitario", "Md Venda"]
     for ci, h in enumerate(hdrs_e, 1):
-        hdr(ws, 3, ci, h, bg=COR_CINZA, fg="000000", bold=True, sz=9)
+        ch(ws, 4, ci, h, bg=COR_CINZA, fg="000000", bold=True, sz=9, h="center")
 
-    # ── Dados Estoque ───────────────────────────────────────────────────
-    row = 4
+    # Dados estoque
+    row = 5
     for i, item in enumerate(itens_estoque):
-        bg = "FFFFFF" if i % 2 == 0 else COR_AZUL_CLARO
+        bg = "FFFFFF" if i % 2 == 0 else COR_ALT
         ws.row_dimensions[row].height = 13
-
-        dat(ws, row, 1, item["descricao"], bg=bg, h="left")
-        dat(ws, row, 2, item["complemento"], bg=bg, h="center")
-        dat(ws, row, 3, item["data_entrada"], bg=bg, h="center")
-        dat(ws, row, 4, item["saldo_atual"], bg=bg, h="center")
-
-        # Qtde vendida — vermelho se zero
-        c_q = dat(ws, row, 5, item["qtd_vendida"], bg=bg, h="center")
-        if item["qtd_vendida"] == 0:
-            c_q.font = _font(color="FF0000", size=9)
-
-        # Custo unit — R$, vermelho se zero
-        c_cu = dat(ws, row, 6, item["custo"], fmt='R$ #,##0.00', bg=bg, h="right")
-        if item["custo"] == 0:
-            c_cu.font = _font(color="FF0000", size=9)
-
-        # Md Venda — R$, vermelho se zero
-        c_mv = dat(ws, row, 7, item["md_venda"], fmt='R$ #,##0.00', bg=bg, h="right")
-        if item["md_venda"] == 0:
-            c_mv.font = _font(color="FF0000", size=9)
-
+        cd(ws, row, 1, item["descricao"], bg=bg, h="left", color="1A3A5C")
+        cd(ws, row, 2, item["complemento"], bg=bg, h="center")
+        cd(ws, row, 3, item["data_entrada"], bg=bg, h="center")
+        cd(ws, row, 4, item["saldo_atual"], bg=bg, h="center")
+        c_q = cd(ws, row, 5, item["qtd_vendida"], bg=bg, h="center")
+        if item["qtd_vendida"] == 0: c_q.font = _t(color="FF0000", size=9)
+        c_cu = cd(ws, row, 6, item["custo"], fmt="R$ #,##0.00", bg=bg, h="right")
+        if item["custo"] == 0: c_cu.font = _t(color="FF0000", size=9)
+        c_mv = cd(ws, row, 7, item["md_venda"], fmt="R$ #,##0.00", bg=bg, h="right")
+        if item["md_venda"] == 0: c_mv.font = _t(color="FF0000", size=9)
         row += 1
 
-    # linha separadora
     row += 1
 
-    # ── Título Metas ────────────────────────────────────────────────────
+    # Título metas
     if metas:
         ws.row_dimensions[row].height = 18
         ws.merge_cells(f"A{row}:G{row}")
         c = ws.cell(row=row, column=1,
-            value=f"  METAS SEMANAIS  ·  {vendedor.upper()}")
-        c.fill = _fill(COR_H)
-        c.font = _font(bold=True, color="FFFFFF", size=10)
-        c.alignment = _al("left")
-        c.border = _border_full("medium", "1A3A5C")
+            value=f"METAS SEMANAIS — {vendedor.upper()} — {data_ref}")
+        c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=11)
+        c.alignment = _a("center"); c.border = _bh()
         row += 1
 
-        # ── Header Metas ────────────────────────────────────────────────
+        # Header metas
         ws.row_dimensions[row].height = 15
-        hdrs_m = ["Produto", "Estoque (cx)", "Meta (cx)", "Vendido (cx)", "Falta (cx)", "% Atingido", "Status"]
-        for ci, h in enumerate(hdrs_m, 1):
-            hdr(ws, row, ci, h, bg=COR_S, fg="FFFFFF", bold=True, sz=9)
+        for ci, h in enumerate(["Produto", "Meta (cx)", "Vendido (cx)", "Falta (cx)", "%"], 1):
+            ch(ws, row, ci, h, bg=COR_S, fg="FFFFFF", bold=True, sz=9)
         row += 1
 
         total_meta = total_vend = 0
@@ -266,61 +243,73 @@ def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas, vendido_v):
             vend = vendido_v.get(produto, 0.0)
             falta = max(meta - vend, 0)
             pct = (vend / meta * 100) if meta > 0 else 0.0
-            total_meta += meta
-            total_vend += vend
-            bg_m, fg_m = cor_pct(pct)
-            status = "✅ Atingida" if pct >= 100 else "⚠️ Andamento" if pct >= 50 else "❌ Abaixo"
+            total_meta += meta; total_vend += vend
+            bg_m, fg_m = cor(pct)
 
             ws.row_dimensions[row].height = 13
-            dat(ws, row, 1, produto, bg=bg_m, h="left", color=fg_m)
-            dat(ws, row, 2, int(est), bg=bg_m, h="center", color=fg_m)
-            dat(ws, row, 3, meta, bg=bg_m, h="center", color=fg_m)
-            dat(ws, row, 4, round(vend, 1), bg=bg_m, h="center", color=fg_m)
-            dat(ws, row, 5, round(falta, 1), bg=bg_m, h="center", color=fg_m)
-
-            c_pct = ws.cell(row=row, column=6, value=round(pct, 1))
-            c_pct.fill = _fill(bg_m); c_pct.font = _font(bold=True, color=fg_m, size=9)
-            c_pct.alignment = _al("center"); c_pct.border = _border_full()
-            c_pct.number_format = '0.0"%"'
-
-            dat(ws, row, 7, status, bg=bg_m, h="center", color=fg_m)
+            cd(ws, row, 1, produto, bg="FFFFFF", h="left")
+            cd(ws, row, 2, meta, bg="FFFFFF", h="center")
+            c_v = cd(ws, row, 3, round(vend, 1), bg="FFFFFF", h="center")
+            if vend == 0: c_v.font = _t(color="FF0000", size=9)
+            cd(ws, row, 4, round(falta, 1), bg="FFFFFF", h="center")
+            cp(ws, row, 5, pct)
             row += 1
 
-        # ── Total Metas ─────────────────────────────────────────────────
+        # Total metas
         pct_t = (total_vend / total_meta * 100) if total_meta > 0 else 0
-        bg_t, fg_t = cor_pct(pct_t)
+        bg_t, fg_t = cor(pct_t)
         ws.row_dimensions[row].height = 15
-
-        for ci, val in enumerate(["TOTAL", "", total_meta, round(total_vend,1),
-                                   round(max(total_meta-total_vend,0),1), f"{pct_t:.1f}%", ""], 1):
+        for ci, val in enumerate(["TOTAL", total_meta, round(total_vend,1),
+                                   round(max(total_meta-total_vend,0),1), ""], 1):
             c = ws.cell(row=row, column=ci, value=val)
-            c.fill = _fill(bg_t)
-            c.font = _font(bold=True, color=fg_t, size=9)
-            c.alignment = _al("left" if ci == 1 else "center")
-            c.border = _border_full("medium", "1A3A5C")
+            c.fill = _f(COR_TOTAL); c.font = _t(bold=True, size=9)
+            c.alignment = _a("left" if ci==1 else "center")
+            c.border = _b("medium","1A3A5C")
+        cp(ws, row, 5, pct_t).border = _b("medium","1A3A5C")
+        ws.cell(row=row, column=5).font = _t(bold=True, color=cor(pct_t)[1], size=9)
         row += 2
 
-    # ── Rodapé ──────────────────────────────────────────────────────────
+        # KPIs abaixo das metas
+        kpis = [
+            ("Meta Total (cx)", total_meta, COR_S, "FFFFFF"),
+            ("Vendido (cx)", round(total_vend,1), COR_V, COR_VF),
+            ("Falta (cx)", round(max(total_meta-total_vend,0),1), COR_R, COR_RF),
+            ("% Atingido", f"{pct_t:.1f}%", *cor(pct_t)),
+        ]
+        ws.row_dimensions[row].height = 13
+        ws.row_dimensions[row+1].height = 22
+
+        for ki, (label, valor, bg_k, fg_k) in enumerate(kpis):
+            col_k = ki + 1
+            c_l = ws.cell(row=row, column=col_k, value=label)
+            c_l.fill = _f(COR_CINZA); c_l.font = _t(bold=True, size=8)
+            c_l.alignment = _a("center"); c_l.border = _b("thin","1A3A5C")
+
+            c_v = ws.cell(row=row+1, column=col_k, value=valor)
+            c_v.fill = _f(bg_k); c_v.font = _t(bold=True, color=fg_k, size=13)
+            c_v.alignment = _a("center"); c_v.border = _b("medium","1A3A5C")
+        row += 3
+
+    # Rodapé
     for texto in RODAPE:
         ws.merge_cells(f"A{row}:G{row}")
         c = ws.cell(row=row, column=1, value=texto)
         if texto.startswith("É DE RESPONSABILIDADE"):
-            c.font = _font(bold=True, size=10, color="FF0000")
-            ws.row_dimensions[row].height = 16
+            c.font = _t(bold=True, size=10, color="FF0000")
+            ws.row_dimensions[row].height = 15
         else:
-            c.font = _font(size=9)
+            c.font = _t(size=9)
             ws.row_dimensions[row].height = 12
-        c.alignment = _al("left")
+        c.alignment = _a("left")
         row += 1
 
-    # ── Larguras ────────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 36
     ws.column_dimensions["B"].width = 15
-    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["C"].width = 13
     ws.column_dimensions["D"].width = 12
     ws.column_dimensions["E"].width = 13
-    ws.column_dimensions["F"].width = 14
-    ws.column_dimensions["G"].width = 14
+    ws.column_dimensions["F"].width = 15
+    ws.column_dimensions["G"].width = 13
     return ws
 
 
@@ -328,188 +317,279 @@ def gerar_aba_vendedor(wb, vendedor, data_ref, itens_estoque, metas, vendido_v):
 # ABA RESUMO GERAL
 # ══════════════════════════════════════════════════════════════════════════
 def gerar_aba_resumo(wb, metas, vendido_todos, data_ref, periodo):
-    ws = wb.create_sheet("Resumo Geral", 0)
+    ws = wb.create_sheet("Resumo Geral")
     ws.sheet_view.showGridLines = False
     set_a4(ws)
 
     n_vend = len(VENDEDORES_ATIVOS)
-    # Colunas: Produto | V1_meta V1_vend V1_pct | V2... | Total_meta Total_vend Total_pct
     n_cols = 1 + n_vend * 3 + 3
 
-    # ── Título ──────────────────────────────────────────────────────────
+    # Título
     ws.merge_cells(f"A1:{get_column_letter(n_cols)}1")
     c = ws["A1"]
-    c.value = f"OTHIL  ·  RESUMO GERAL DE METAS  ·  {periodo}  ·  Gerado em: {data_ref}"
-    c.fill = _fill(COR_H)
-    c.font = _font(bold=True, color="FFFFFF", size=12)
-    c.alignment = _al("center")
-    c.border = _border_thick()
-    ws.row_dimensions[1].height = 26
+    c.value = f"OTHIL — RESUMO GERAL DE METAS  |  {periodo}  |  {data_ref}"
+    c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=12)
+    c.alignment = _a("center"); c.border = _bh()
+    ws.row_dimensions[1].height = 22
 
-    # ── KPIs rápidos ────────────────────────────────────────────────────
-    total_meta_g = sum(math.ceil(item["estoque"] * PERCENTUAIS.get(v,0))
-                       for item in metas for v in VENDEDORES_ATIVOS)
-    total_vend_g = sum(vendido_todos.get(v,{}).get(item["produto"],0)
-                       for item in metas for v in VENDEDORES_ATIVOS)
-    pct_g = (total_vend_g / total_meta_g * 100) if total_meta_g > 0 else 0
-
-    ws.merge_cells(f"A2:{get_column_letter(n_cols)}2")
-    bg_kpi, _ = cor_pct(pct_g)
-    c2 = ws["A2"]
-    c2.value = (f"  Meta Total: {total_meta_g:,.0f} cx   |   "
-                f"Vendido Total: {total_vend_g:,.0f} cx   |   "
-                f"Falta: {max(total_meta_g-total_vend_g,0):,.0f} cx   |   "
-                f"% Geral Atingido: {pct_g:.1f}%")
-    c2.fill = _fill(bg_kpi)
-    c2.font = _font(bold=True, color="000000", size=10)
-    c2.alignment = _al("left")
-    c2.border = _border_full("medium", "1A3A5C")
-    ws.row_dimensions[2].height = 18
-
-    # ── Header grupo vendedores ──────────────────────────────────────────
-    ws.row_dimensions[3].height = 16
-    ws.cell(row=3, column=1, value="").border = _border_full("medium","1A3A5C")
-
+    # Header grupo vendedores
+    ws.row_dimensions[2].height = 16
+    c_blank = ws.cell(row=2, column=1, value="")
+    c_blank.border = _b("medium","1A3A5C")
     col = 2
     for v in VENDEDORES_ATIVOS:
-        ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col+2)
-        c = ws.cell(row=3, column=col, value=v)
-        c.fill = _fill(COR_S)
-        c.font = _font(bold=True, color="FFFFFF", size=9)
-        c.alignment = _al("center")
-        c.border = _border_full("medium", "1A3A5C")
+        ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col+2)
+        c = ws.cell(row=2, column=col, value=v)
+        c.fill = _f(COR_S); c.font = _t(bold=True, color="FFFFFF", size=9)
+        c.alignment = _a("center"); c.border = _b("medium","1A3A5C")
         col += 3
+    ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col+2)
+    c = ws.cell(row=2, column=col, value="TOTAL GERAL")
+    c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=9)
+    c.alignment = _a("center"); c.border = _b("medium","1A3A5C")
 
-    ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col+2)
-    c = ws.cell(row=3, column=col, value="TOTAL GERAL")
-    c.fill = _fill(COR_H)
-    c.font = _font(bold=True, color="FFFFFF", size=9)
-    c.alignment = _al("center")
-    c.border = _border_full("medium", "1A3A5C")
-
-    # ── Header subcolumas ───────────────────────────────────────────────
-    ws.row_dimensions[4].height = 14
-    hdr(ws, 4, 1, "Produto", bg=COR_CINZA, fg="000000", sz=9)
+    # Subheader
+    ws.row_dimensions[3].height = 13
+    ch(ws, 3, 1, "Produto", bg=COR_CINZA, fg="000000", sz=9, h="left")
     col = 2
     for _ in VENDEDORES_ATIVOS:
-        hdr(ws, 4, col,   "Meta",    bg=COR_CINZA, fg="000000", sz=8)
-        hdr(ws, 4, col+1, "Vendido", bg=COR_CINZA, fg="000000", sz=8)
-        hdr(ws, 4, col+2, "%",       bg=COR_CINZA, fg="000000", sz=8)
-        col += 3
-    hdr(ws, 4, col,   "Meta",    bg=COR_CINZA, fg="000000", sz=8)
-    hdr(ws, 4, col+1, "Vendido", bg=COR_CINZA, fg="000000", sz=8)
-    hdr(ws, 4, col+2, "%",       bg=COR_CINZA, fg="000000", sz=8)
+        for h in ["Meta","Vend","%"]:
+            ch(ws, 3, col, h, bg=COR_CINZA, fg="000000", sz=8)
+            col += 1
+    for h in ["Meta","Vend","%"]:
+        ch(ws, 3, col, h, bg=COR_CINZA, fg="000000", sz=8)
+        col += 1
 
-    # ── Dados ───────────────────────────────────────────────────────────
-    row = 5
+    # Dados
+    row = 4
     tot_meta_v = {v: 0 for v in VENDEDORES_ATIVOS}
     tot_vend_v = {v: 0.0 for v in VENDEDORES_ATIVOS}
 
     for i, item in enumerate(metas):
         produto = item["produto"]
         est = item["estoque"]
-        bg = "FFFFFF" if i % 2 == 0 else COR_AZUL_CLARO
+        bg = "FFFFFF" if i % 2 == 0 else COR_ALT
         ws.row_dimensions[row].height = 13
 
-        dat(ws, row, 1, produto, bg=bg, h="left")
+        c = ws.cell(row=row, column=1, value=produto)
+        c.fill = _f(bg); c.font = _t(size=9, color="1A3A5C")
+        c.alignment = _a("left"); c.border = _b()
 
         col = 2
-        tot_meta_linha = tot_vend_linha = 0
+        tot_meta_l = tot_vend_l = 0
         for v in VENDEDORES_ATIVOS:
-            meta_v = math.ceil(est * PERCENTUAIS.get(v, 0))
-            vend_v = round(vendido_todos.get(v, {}).get(produto, 0.0), 1)
+            meta_v = math.ceil(est * PERCENTUAIS.get(v,0))
+            vend_v = round(vendido_todos.get(v,{}).get(produto,0.0),1)
             pct_v  = (vend_v / meta_v * 100) if meta_v > 0 else 0.0
-            bg_p, fg_p = cor_pct(pct_v)
-            tot_meta_v[v] += meta_v
-            tot_vend_v[v] += vend_v
-            tot_meta_linha += meta_v
-            tot_vend_linha += vend_v
-
-            dat(ws, row, col,   meta_v,        bg=bg,  h="center")
-            dat(ws, row, col+1, vend_v,         bg=bg,  h="center")
-            c_p = ws.cell(row=row, column=col+2, value=round(pct_v,1))
-            c_p.fill = _fill(bg_p); c_p.font = _font(color=fg_p, size=9)
-            c_p.alignment = _al("center"); c_p.border = _border_full()
-            c_p.number_format = '0.0"%"'
-            col += 3
+            tot_meta_v[v] += meta_v; tot_vend_v[v] += vend_v
+            tot_meta_l += meta_v; tot_vend_l += vend_v
+            cd(ws, row, col, meta_v, bg=bg, h="center"); col += 1
+            c_vv = cd(ws, row, col, vend_v, bg=bg, h="center")
+            if vend_v == 0: c_vv.font = _t(color="FF0000",size=9)
+            col += 1
+            cp(ws, row, col, pct_v); col += 1
 
         # Total linha
-        pct_linha = (tot_vend_linha / tot_meta_linha * 100) if tot_meta_linha > 0 else 0
-        bg_tl, fg_tl = cor_pct(pct_linha)
-        dat(ws, row, col,   tot_meta_linha,           bg=COR_TOTAL, bold=True, h="center")
-        dat(ws, row, col+1, round(tot_vend_linha,1),  bg=COR_TOTAL, bold=True, h="center")
-        c_tl = ws.cell(row=row, column=col+2, value=round(pct_linha,1))
-        c_tl.fill = _fill(bg_tl); c_tl.font = _font(bold=True, color=fg_tl, size=9)
-        c_tl.alignment = _al("center"); c_tl.border = _border_full("thin","1A3A5C")
-        c_tl.number_format = '0.0"%"'
+        pct_l = (tot_vend_l/tot_meta_l*100) if tot_meta_l>0 else 0
+        cd(ws, row, col, tot_meta_l, bg=COR_TOTAL, bold=True, h="center"); col+=1
+        cd(ws, row, col, round(tot_vend_l,1), bg=COR_TOTAL, bold=True, h="center"); col+=1
+        cp(ws, row, col, pct_l)
         row += 1
 
-    # ── Linha Total Geral ────────────────────────────────────────────────
-    ws.row_dimensions[row].height = 16
-    hdr(ws, row, 1, "TOTAL", bg=COR_H, fg="FFFFFF", sz=9, h="left")
-    col = 2
-    grand_meta = grand_vend = 0
+    # Total geral
+    ws.row_dimensions[row].height = 15
+    c = ws.cell(row=row, column=1, value="TOTAL")
+    c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=9)
+    c.alignment = _a("left"); c.border = _b("medium","1A3A5C")
+
+    col = 2; grand_m = grand_v = 0
     for v in VENDEDORES_ATIVOS:
-        pct_v = (tot_vend_v[v] / tot_meta_v[v] * 100) if tot_meta_v[v] > 0 else 0
-        bg_p, fg_p = cor_pct(pct_v)
-        grand_meta += tot_meta_v[v]
-        grand_vend += tot_vend_v[v]
+        pct_v = (tot_vend_v[v]/tot_meta_v[v]*100) if tot_meta_v[v]>0 else 0
+        grand_m += tot_meta_v[v]; grand_v += tot_vend_v[v]
+        for val in [tot_meta_v[v], round(tot_vend_v[v],1)]:
+            c = ws.cell(row=row, column=col, value=val)
+            c.fill = _f(COR_TOTAL); c.font = _t(bold=True, size=9)
+            c.alignment = _a("center"); c.border = _b("thin","1A3A5C")
+            col += 1
+        cp(ws, row, col, pct_v).border = _b("medium","1A3A5C")
+        col += 1
 
-        c_m = ws.cell(row=row, column=col, value=tot_meta_v[v])
-        c_m.fill = _fill(COR_TOTAL); c_m.font = _font(bold=True, size=9)
-        c_m.alignment = _al("center"); c_m.border = _border_full("thin","1A3A5C")
-
-        c_v = ws.cell(row=row, column=col+1, value=round(tot_vend_v[v],1))
-        c_v.fill = _fill(COR_TOTAL); c_v.font = _font(bold=True, size=9)
-        c_v.alignment = _al("center"); c_v.border = _border_full("thin","1A3A5C")
-
-        c_p = ws.cell(row=row, column=col+2, value=round(pct_v,1))
-        c_p.fill = _fill(bg_p); c_p.font = _font(bold=True, color=fg_p, size=9)
-        c_p.alignment = _al("center"); c_p.border = _border_full("medium","1A3A5C")
-        c_p.number_format = '0.0"%"'
-        col += 3
-
-    # Grand total
-    pct_grand = (grand_vend / grand_meta * 100) if grand_meta > 0 else 0
-    bg_g, fg_g = cor_pct(pct_grand)
-    c_gm = ws.cell(row=row, column=col, value=grand_meta)
-    c_gm.fill = _fill(COR_H); c_gm.font = _font(bold=True, color="FFFFFF", size=9)
-    c_gm.alignment = _al("center"); c_gm.border = _border_full("medium","1A3A5C")
-
-    c_gv = ws.cell(row=row, column=col+1, value=round(grand_vend,1))
-    c_gv.fill = _fill(COR_H); c_gv.font = _font(bold=True, color="FFFFFF", size=9)
-    c_gv.alignment = _al("center"); c_gv.border = _border_full("medium","1A3A5C")
-
-    c_gp = ws.cell(row=row, column=col+2, value=round(pct_grand,1))
-    c_gp.fill = _fill(bg_g); c_gp.font = _font(bold=True, color=fg_g, size=9)
-    c_gp.alignment = _al("center"); c_gp.border = _border_full("medium","1A3A5C")
+    pct_grand = (grand_v/grand_m*100) if grand_m>0 else 0
+    for val in [grand_m, round(grand_v,1)]:
+        c = ws.cell(row=row, column=col, value=val)
+        c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=9)
+        c.alignment = _a("center"); c.border = _b("medium","1A3A5C")
+        col += 1
+    c_gp = ws.cell(row=row, column=col, value=round(pct_grand,1))
+    bg_gp, fg_gp = cor(pct_grand)
+    c_gp.fill = _f(bg_gp); c_gp.font = _t(bold=True, color=fg_gp, size=9)
+    c_gp.alignment = _a("center"); c_gp.border = _b("medium","1A3A5C")
     c_gp.number_format = '0.0"%"'
 
-    # ── Larguras ─────────────────────────────────────────────────────────
-    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["A"].width = 24
     col = 2
     for _ in VENDEDORES_ATIVOS:
-        ws.column_dimensions[get_column_letter(col)].width   = 8
-        ws.column_dimensions[get_column_letter(col+1)].width = 9
-        ws.column_dimensions[get_column_letter(col+2)].width = 7
+        ws.column_dimensions[get_column_letter(col)].width = 7
+        ws.column_dimensions[get_column_letter(col+1)].width = 7
+        ws.column_dimensions[get_column_letter(col+2)].width = 6
         col += 3
-    ws.column_dimensions[get_column_letter(col)].width   = 9
-    ws.column_dimensions[get_column_letter(col+1)].width = 10
-    ws.column_dimensions[get_column_letter(col+2)].width = 7
-
+    for extra in range(3):
+        ws.column_dimensions[get_column_letter(col+extra)].width = 8
     return ws
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# INTERFACE
+# ABA DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════
+def gerar_aba_dashboard(wb, metas, vendido_todos, data_ref, periodo):
+    ws = wb.create_sheet("Dashboard")
+    ws.sheet_view.showGridLines = False
+
+    # Título
+    ws.merge_cells("A1:H1")
+    c = ws["A1"]
+    c.value = f"OTHIL — DASHBOARD DE METAS  |  {periodo}"
+    c.fill = _f(COR_H); c.font = _t(bold=True, color="FFFFFF", size=13)
+    c.alignment = _a("center"); c.border = _bh()
+    ws.row_dimensions[1].height = 26
+
+    # KPIs Gerais
+    total_meta_g = sum(math.ceil(item["estoque"]*PERCENTUAIS.get(v,0))
+                       for item in metas for v in VENDEDORES_ATIVOS)
+    total_vend_g = sum(vendido_todos.get(v,{}).get(item["produto"],0)
+                       for item in metas for v in VENDEDORES_ATIVOS)
+    pct_g = (total_vend_g/total_meta_g*100) if total_meta_g>0 else 0
+    n_criticos = sum(1 for item in metas
+        if (sum(vendido_todos.get(v,{}).get(item["produto"],0) for v in VENDEDORES_ATIVOS) /
+            max(sum(math.ceil(item["estoque"]*PERCENTUAIS.get(v,0)) for v in VENDEDORES_ATIVOS),1)*100) < 50)
+
+    kpis_g = [
+        ("Meta Total Geral", total_meta_g, COR_S, "FFFFFF"),
+        ("Vendido Total", round(total_vend_g,1), COR_V, COR_VF),
+        ("Falta Total", round(max(total_meta_g-total_vend_g,0),1), COR_R, COR_RF),
+        ("% Geral Atingido", f"{pct_g:.1f}%", *cor(pct_g)),
+        ("Produtos Críticos <50%", n_criticos, "E65100", "FFFFFF"),
+        ("Total Produtos", len(metas), COR_H, "FFFFFF"),
+    ]
+
+    ws.row_dimensions[2].height = 13
+    ws.row_dimensions[3].height = 24
+
+    for ki, (label, valor, bg_k, fg_k) in enumerate(kpis_g[:6]):
+        col_k = ki + 1
+        c_l = ws.cell(row=2, column=col_k, value=label)
+        c_l.fill = _f(COR_CINZA); c_l.font = _t(bold=True, size=8)
+        c_l.alignment = _a("center"); c_l.border = _b("thin","1A3A5C")
+        c_v = ws.cell(row=3, column=col_k, value=valor)
+        c_v.fill = _f(bg_k); c_v.font = _t(bold=True, color=fg_k, size=13)
+        c_v.alignment = _a("center"); c_v.border = _b("medium","1A3A5C")
+
+    row = 5
+
+    # Ranking vendedores
+    ws.merge_cells(f"A{row}:H{row}")
+    c = ws.cell(row=row, column=1, value="RANKING DE VENDEDORES")
+    c.fill = _f(COR_S); c.font = _t(bold=True, color="FFFFFF", size=10)
+    c.alignment = _a("center"); ws.row_dimensions[row].height = 16
+    row += 1
+
+    hdrs_r = ["#", "Vendedor", "Meta (cx)", "Vendido (cx)", "Falta (cx)", "% Atingido", "Status", "Meta %"]
+    for ci, h in enumerate(hdrs_r, 1):
+        ch(ws, row, ci, h, bg=COR_CINZA, fg="000000", sz=9)
+    ws.row_dimensions[row].height = 14
+    row += 1
+
+    ranking = []
+    for v in VENDEDORES_ATIVOS:
+        meta_v = sum(math.ceil(item["estoque"]*PERCENTUAIS.get(v,0)) for item in metas)
+        vend_v = sum(vendido_todos.get(v,{}).get(item["produto"],0) for item in metas)
+        pct_v  = (vend_v/meta_v*100) if meta_v>0 else 0
+        ranking.append((v, meta_v, round(vend_v,1), max(meta_v-vend_v,0), round(pct_v,1)))
+    ranking.sort(key=lambda x: x[4], reverse=True)
+
+    for pos, (v, meta_v, vend_v, falta_v, pct_v) in enumerate(ranking, 1):
+        bg_r, fg_r = cor(pct_v)
+        status = "✅ Atingiu" if pct_v>=100 else "⚠️ Andamento" if pct_v>=50 else "❌ Abaixo"
+        ws.row_dimensions[row].height = 14
+
+        medal = "🥇" if pos==1 else "🥈" if pos==2 else "🥉" if pos==3 else str(pos)
+        cd(ws, row, 1, medal, h="center")
+        cd(ws, row, 2, v, h="left", color="1A3A5C")
+        cd(ws, row, 3, meta_v, h="center")
+        c_vv = cd(ws, row, 4, vend_v, h="center")
+        if vend_v==0: c_vv.font = _t(color="FF0000",size=9)
+        cd(ws, row, 5, round(falta_v,1), h="center")
+        cp(ws, row, 6, pct_v)
+        cd(ws, row, 7, status, bg=bg_r, h="center", color=fg_r)
+        cd(ws, row, 8, f"{int(PERCENTUAIS.get(v,0)*100)}%", h="center", color="666666")
+        row += 1
+
+    row += 1
+
+    # Produtos críticos
+    ws.merge_cells(f"A{row}:H{row}")
+    c = ws.cell(row=row, column=1, value="PRODUTOS CRÍTICOS — ABAIXO DE 50%")
+    c.fill = _f("C62828"); c.font = _t(bold=True, color="FFFFFF", size=10)
+    c.alignment = _a("center"); ws.row_dimensions[row].height = 16
+    row += 1
+
+    hdrs_c = ["Produto", "Meta Total", "Vendido Total", "Falta", "% Geral", "Vendedor Destaque", "", ""]
+    for ci, h in enumerate(hdrs_c, 1):
+        ch(ws, row, ci, h, bg=COR_CINZA, fg="000000", sz=9)
+    ws.row_dimensions[row].height = 13
+    row += 1
+
+    criticos = []
+    for item in metas:
+        produto = item["produto"]; est = item["estoque"]
+        meta_t = sum(math.ceil(est*PERCENTUAIS.get(v,0)) for v in VENDEDORES_ATIVOS)
+        vend_t = sum(vendido_todos.get(v,{}).get(produto,0) for v in VENDEDORES_ATIVOS)
+        pct_t  = (vend_t/meta_t*100) if meta_t>0 else 0
+        if pct_t < 50:
+            melhor_v = max(VENDEDORES_ATIVOS,
+                key=lambda v: (vendido_todos.get(v,{}).get(produto,0)/
+                    max(math.ceil(est*PERCENTUAIS.get(v,0)),1)*100))
+            criticos.append((produto, meta_t, round(vend_t,1),
+                             round(max(meta_t-vend_t,0),1), round(pct_t,1), melhor_v))
+    criticos.sort(key=lambda x: x[4])
+
+    if not criticos:
+        ws.merge_cells(f"A{row}:H{row}")
+        c = ws.cell(row=row, column=1, value="Nenhum produto crítico! Todos acima de 50%.")
+        c.fill = _f(COR_V); c.font = _t(bold=True, color=COR_VF, size=10)
+        c.alignment = _a("center"); ws.row_dimensions[row].height = 18
+    else:
+        for produto, meta_t, vend_t, falta_t, pct_t, melhor_v in criticos:
+            ws.row_dimensions[row].height = 13
+            cd(ws, row, 1, produto, bg=COR_R, h="left", color=COR_RF)
+            cd(ws, row, 2, meta_t, bg=COR_R, h="center", color=COR_RF)
+            cd(ws, row, 3, vend_t, bg=COR_R, h="center", color=COR_RF)
+            cd(ws, row, 4, falta_t, bg=COR_R, h="center", color=COR_RF)
+            cp(ws, row, 5, pct_t)
+            cd(ws, row, 6, melhor_v, bg=COR_V, h="center", color=COR_VF)
+            cd(ws, row, 7, ""); cd(ws, row, 8, "")
+            row += 1
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 10
+    ws.column_dimensions["E"].width = 11
+    ws.column_dimensions["F"].width = 12
+    ws.column_dimensions["G"].width = 14
+    ws.column_dimensions["H"].width = 10
+    return ws
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# INTERFACE STREAMLIT
 # ══════════════════════════════════════════════════════════════════════════
 st.subheader("1️⃣ Metas da Semana")
-
 col_ini, col_fim = st.columns(2)
 with col_ini:
-    semana_ini = st.date_input("Início", value=date.today() - timedelta(days=date.today().weekday()))
+    semana_ini = st.date_input("Início", value=date.today()-timedelta(days=date.today().weekday()))
 with col_fim:
-    semana_fim = st.date_input("Fim", value=semana_ini + timedelta(days=5))
+    semana_fim = st.date_input("Fim", value=semana_ini+timedelta(days=5))
 periodo = f"{semana_ini.strftime('%d/%m/%Y')} a {semana_fim.strftime('%d/%m/%Y')}"
 
 st.caption("Busque ou digite um produto para adicionar:")
@@ -518,8 +598,8 @@ produtos_disp = [p for p in PRODUTOS_LISTA if p not in produtos_ja]
 
 col_b, col_n, col_e, col_btn = st.columns([2,2,1,1])
 with col_b:
-    prod_sel = st.selectbox("Buscar", options=[""] + produtos_disp,
-        format_func=lambda x: "🔍 Selecione da lista..." if x == "" else x,
+    prod_sel = st.selectbox("Buscar", options=[""]+produtos_disp,
+        format_func=lambda x: "🔍 Selecione da lista..." if x=="" else x,
         label_visibility="collapsed")
 with col_n:
     prod_novo = st.text_input("Novo", placeholder="✏️ Ou digite produto novo...",
@@ -548,11 +628,11 @@ if st.session_state.produtos_meta:
         est = item["estoque"]
         row = {"Produto": item["produto"], "Estoque CX": int(est)}
         for v in VENDEDORES_ATIVOS:
-            row[f"{v} ({int(PERCENTUAIS[v]*100)}%)"] = math.ceil(est * PERCENTUAIS[v])
+            row[f"{v} ({int(PERCENTUAIS[v]*100)}%)"] = math.ceil(est*PERCENTUAIS[v])
         rows.append(row)
 
     df_edit = st.data_editor(pd.DataFrame(rows), use_container_width=True, hide_index=True,
-        disabled=["Produto"] + [f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS],
+        disabled=["Produto"]+[f"{v} ({int(PERCENTUAIS[v]*100)}%)" for v in VENDEDORES_ATIVOS],
         key="editor_metas")
     for i, row in df_edit.iterrows():
         if i < len(st.session_state.produtos_meta):
@@ -577,7 +657,6 @@ if st.session_state.produtos_meta:
 
 st.divider()
 st.subheader("2️⃣ Upload dos PDFs")
-
 col_p1, col_p2 = st.columns(2)
 with col_p1:
     st.caption("📊 PDF de Vendas Acumuladas")
@@ -597,7 +676,7 @@ if pdf_vendas:
         if vend not in vendido_c: continue
         for desc, qtd in prods.items():
             pm = mapear_produto(desc)
-            if pm: vendido_c[vend][pm] = vendido_c[vend].get(pm, 0) + qtd
+            if pm: vendido_c[vend][pm] = vendido_c[vend].get(pm,0)+qtd
     st.session_state.vendido = vendido_c
     found = [v for v in vendas_raw if v in VENDEDORES_ATIVOS]
     st.success(f"✅ Vendas: {', '.join(found)}")
@@ -608,8 +687,8 @@ if pdf_estoque:
             tmp.write(pdf_estoque.read()); tmp_path = tmp.name
         est_raw = extrair_estoque_por_vendedor(tmp_path)
         os.unlink(tmp_path)
-    st.session_state.estoque = {v: est_raw.get(v, []) for v in VENDEDORES_ATIVOS}
-    st.session_state.sem_vendedor = est_raw.get("SEM_VENDEDOR", [])
+    st.session_state.estoque = {v: est_raw.get(v,[]) for v in VENDEDORES_ATIVOS}
+    st.session_state.sem_vendedor = est_raw.get("SEM_VENDEDOR",[])
     total = sum(len(v) for v in st.session_state.estoque.values())
     st.success(f"✅ Estoque: {total} produto(s) distribuídos.")
     if st.session_state.sem_vendedor:
@@ -631,14 +710,16 @@ if st.button("📋 Gerar Relatórios Completos", use_container_width=True, type=
             data_ref = date.today().strftime("%d/%m/%Y")
 
             if st.session_state.produtos_meta:
+                gerar_aba_dashboard(wb, st.session_state.produtos_meta,
+                    st.session_state.vendido, data_ref, periodo)
                 gerar_aba_resumo(wb, st.session_state.produtos_meta,
                     st.session_state.vendido, data_ref, periodo)
 
             for vendedor in VENDEDORES_ATIVOS:
                 gerar_aba_vendedor(wb, vendedor, data_ref,
-                    st.session_state.estoque.get(vendedor, []),
+                    st.session_state.estoque.get(vendedor,[]),
                     st.session_state.produtos_meta,
-                    st.session_state.vendido.get(vendedor, {}))
+                    st.session_state.vendido.get(vendedor,{}))
 
             buf = io.BytesIO()
             wb.save(buf); buf.seek(0)
